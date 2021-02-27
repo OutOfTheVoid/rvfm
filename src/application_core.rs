@@ -38,6 +38,6 @@ impl ApplicationCore {
 		};
 		
 		self.cpu.reset(start_address);
-		self.cpu.run_loop(200000, Duration::from_millis(10))
+		self.cpu.run_loop(50000, Duration::from_micros(2500))
 	}
 }

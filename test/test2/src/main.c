@@ -7,6 +7,8 @@
 #define GPU_RAW_FRAMEBUFFER ((volatile uint32_t *) 0x2000000)
 
 #define GPU_MODE_SET *((volatile uint32_t *) 0xF0010000)
+#define GPU_PRESENT_MMFB *((volatile uint32_t *) 0xF0010004)
+#define GPU_VSYNC_INT_ENABLE *((volatile uint32_t *) 0xF0010008)
 
 #define GPU_MODE_RAW_FRAMEBUFFER 1
 
@@ -86,6 +88,7 @@ void setup_vsync_interrupt() {
 	clear_pending_interrupts();
 	enable_interrupts();
 	enable_external_interrupts();
+	GPU_VSYNC_INT_ENABLE = 1;
 }
 
 void vsync_interrupt_wait() {
@@ -94,8 +97,8 @@ void vsync_interrupt_wait() {
 }
 
 void main() {
-	setup_vsync_interrupt();
 	GPU_MODE_SET = GPU_MODE_RAW_FRAMEBUFFER;
+	setup_vsync_interrupt();
 	
 	while (1) {
 		// wait for vsync
@@ -108,5 +111,7 @@ void main() {
 		
 		// draw yellow square
 		draw_square(interrupt_count % 236);
+		// present mmfb
+		GPU_PRESENT_MMFB = 1;
 	}
 }
