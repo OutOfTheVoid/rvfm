@@ -3,7 +3,7 @@
 RVFM is a virtual console, including an RV32IMACF emulator written entirely in Rust.
 
 ## Specs
-- RV32IMACF
+- RV32IMACF (incomplete)
   - Dual core, eventually (seperate host threads)
   - Interpreted (though JIT is not out of the question)
 - Sequentially consistent memory
