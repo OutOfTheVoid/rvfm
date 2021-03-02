@@ -385,6 +385,7 @@ impl GpuPeripheralInterface {
 pub struct GpuInterruptOutput {
 	cpu_frame: Arc<AtomicUsize>,
 	gpu_frame: Arc<AtomicUsize>,
+	sync_interrupt_state: Arc<AtomicBool>,
 	sync_interrupt_enable: Arc<AtomicBool>
 }
 
@@ -393,17 +394,27 @@ impl GpuInterruptOutput {
 		Self {
 			cpu_frame: Arc::new(AtomicUsize::new(0)),
 			gpu_frame,
+			sync_interrupt_state: Arc::new(AtomicBool::new(false)),
 			sync_interrupt_enable
 		}
 	}
 	
 	pub fn poll_sync_interrupt(&mut self) -> bool {
 		if ! self.sync_interrupt_enable.load(Ordering::SeqCst) {
+			self.sync_interrupt_state.store(false, Ordering::SeqCst);
 			return false
 		}
 		let gpu_frame_num = self.gpu_frame.load(Ordering::SeqCst);
 		let active = self.cpu_frame.load(Ordering::SeqCst) < gpu_frame_num;
 		self.cpu_frame.store(gpu_frame_num, Ordering::SeqCst);
-		active
+		self.sync_interrupt_state.fetch_or(active, Ordering::SeqCst) || active
+	}
+	
+	pub fn clear_sync_interrupt(&mut self) {
+		self.sync_interrupt_state.store(false, Ordering::SeqCst);
+	}
+	
+	pub fn get_sync_interrupt_state(&mut self) -> bool {
+		self.sync_interrupt_state.load(Ordering::SeqCst)
 	}
 }

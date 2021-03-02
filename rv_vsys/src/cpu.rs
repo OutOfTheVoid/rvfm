@@ -90,7 +90,7 @@ const MIP_MSIP: u32 = 1 << 3;
 const MIP_MTIP: u32 = 1 << 7;
 const MIP_MEIP: u32 = 1 << 11;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Exception {
 	InstructionMisaligned(u32),
 	InstructionAccessFault(u32),
@@ -241,6 +241,11 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 			'period_loop: for _ in 0 .. inst_per_period {
 				if ! self.step() {
 					break 'period_loop;
+				}
+			}
+			if cfg!(feature = "cpu_debug") { 
+				if let Some(exception) = self.pending_exception {
+					print!("exception @{:#010x}: {:?}", self.pc, exception);
 				}
 			}
 			self.step_break();
@@ -500,7 +505,7 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 									return false;
 								},
 								_ => {
-									self.pending_exception = Some(Exception::StoreAccessFault{
+									self.pending_exception = Some(Exception::StoreAccessFault {
 										instr_addr: self.pc,
 										store_addr: address
 									});
@@ -514,14 +519,14 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 								MemWriteResult::Ok => {
 								},
 								MemWriteResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::StoreAddressMisaligned{
+									self.pending_exception = Some(Exception::StoreAddressMisaligned {
 										instr_addr: self.pc,
 										store_addr: address
 									});
 									return false;
 								},
 								_ => {
-									self.pending_exception = Some(Exception::StoreAccessFault{
+									self.pending_exception = Some(Exception::StoreAccessFault {
 										instr_addr: self.pc,
 										store_addr: address
 									});

@@ -5,7 +5,7 @@ use atomic_counter::{AtomicCounter, ConsistentCounter};
 
 use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{debug_device::DebugDevice, gpu::GpuPeripheralInterface};
+use crate::{debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
@@ -97,6 +97,8 @@ pub struct FmMemoryIO {
 	page_locks: ArcMutPtr<[Arc<PageGaurd>]>,
 	debug_device: ArcMutPtr<DebugDevice>,
 	gpu_interface_device: Arc<OnceCell<GpuPeripheralInterface>>,
+	dsp_dma_device: Arc<DspDmaDeviceInterface>,
+	interrupt_bus_device: FmInterruptBus,
 	mem_lock_hold_d: UnsafeCell<MemLockHold>,
 	mem_lock_hold_i: UnsafeCell<MemLockHold>,
 	write_cycle_counter: Arc<ConsistentCounter>,
@@ -137,6 +139,8 @@ impl Clone for FmMemoryIO {
 			page_locks: self.page_locks.clone(),
 			debug_device: self.debug_device.clone(),
 			gpu_interface_device: self.gpu_interface_device.clone(),
+			dsp_dma_device: self.dsp_dma_device.clone(),
+			interrupt_bus_device: self.interrupt_bus_device.clone(),
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: self.write_cycle_counter.clone(),
@@ -147,7 +151,7 @@ impl Clone for FmMemoryIO {
 }
 
 impl FmMemoryIO {
-	pub fn new() -> FmMemoryIO {
+	pub fn new(interrupt_bus: FmInterruptBus) -> FmMemoryIO {
 		let mut lock_vec = Vec::new();
 		for _ in 0 .. (RAM_SIZE / LOCK_GRANULARITY) {
 			lock_vec.push(Arc::new(PageGaurd::new()));
@@ -159,6 +163,8 @@ impl FmMemoryIO {
 			page_locks: ArcMutPtr::new(lock_vec.into_boxed_slice()),
 			debug_device: ArcMutPtr::new(Box::new(DebugDevice::new())),
 			gpu_interface_device: Arc::new(OnceCell::default()),
+			dsp_dma_device: Arc::new(DspDmaDeviceInterface::new(DspDmaDevice::new(0xF002_0000))),
+			interrupt_bus_device: interrupt_bus,
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: Arc::new(ConsistentCounter::new(1)),
@@ -332,6 +338,12 @@ impl MemIO for FmMemoryIO {
 					0 => {
 						self.debug_device.as_ref().read_32(peripheral_offset)
 					},
+					2 => {
+						self.dsp_dma_device.clone().read_32(peripheral_offset)
+					}
+					3 => {
+						self.interrupt_bus_device.read_32(peripheral_offset)
+					}
 					_ => {
 						MemReadResult::ErrUnmapped
 					}
@@ -400,7 +412,7 @@ impl MemIO for FmMemoryIO {
 		if addr == 0 {
 			return MemWriteResult::ErrUnmapped;
 		}
-		match (addr + 3) >> 28 {
+		match addr >> 28 {
 			0 => {
 				self.ram_sync_write(addr);
 				LE::write_u32(&mut self.ram.as_mut()[addr as usize ..], value);
@@ -416,6 +428,13 @@ impl MemIO for FmMemoryIO {
 					1 => {
 						self.gpu_interface_device.get().unwrap().clone().write_u32(peripheral_offset, value)
 					},
+					2 => {
+						let device = self.dsp_dma_device.clone();
+						device.write_32(self, peripheral_offset, value)
+					},
+					3 => {
+						self.interrupt_bus_device.write_32(peripheral_offset, value)
+					}
 					_ => {
 						MemWriteResult::ErrUnmapped
 					}

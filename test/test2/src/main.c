@@ -12,6 +12,10 @@
 
 #define GPU_MODE_RAW_FRAMEBUFFER 1
 
+#define GPU_SYNC_INTERRUPT_STATE *((volatile uint32_t *) 0xF0030000)
+
+#include "dspdma.h"
+
 int32_t str_len(const char * string) {
 	int32_t count = 0;
 	while (string[count] != '\0') {
@@ -62,11 +66,22 @@ void clear_pending_interrupts() {
 	__asm__ volatile("csrw 0x344, 0");
 }
 
-int interrupt_count = 0;
+uint32_t get_gpu_sync_interrupt_state() {
+	return GPU_SYNC_INTERRUPT_STATE;
+}
+
+void clear_gpu_sync_interrupt() {
+	GPU_SYNC_INTERRUPT_STATE = 0;
+}
+
+volatile int frame = 0;
 
 void __attribute__((interrupt("machine"))) interrupt_handler () {
 	clear_pending_interrupts();
-	interrupt_count ++;
+	if (get_gpu_sync_interrupt_state()) {
+		clear_gpu_sync_interrupt();
+		frame ++;
+	}
 }
 
 uint32_t get_time() {
@@ -84,6 +99,7 @@ void draw_square(int x) {
 }
 
 void setup_vsync_interrupt() {
+	disable_interrupts();
 	set_interrupt_handler(interrupt_handler);
 	clear_pending_interrupts();
 	enable_interrupts();
@@ -91,9 +107,65 @@ void setup_vsync_interrupt() {
 	GPU_VSYNC_INT_ENABLE = 1;
 }
 
+int get_frame() {
+	disable_interrupts();
+	int f = frame;
+	enable_interrupts();
+	return f;
+}
+
+int last_frame = 0;
+
 void vsync_interrupt_wait() {
-	clear_pending_interrupts();
-	wfi();
+	int current_frame = get_frame();
+	while(current_frame == last_frame) {
+		wfi();
+		current_frame = get_frame();
+	}
+	last_frame = current_frame;
+}
+
+void dspdma_set_dest32(void * dest, int index) {
+	DSPDMA_TYPE = DSPDMA_DEST_TYPE_MEM32;
+	DSPDMA_INDEX = index;
+	DSPDMA_PARAM0 = (uint32_t) dest;
+	DSPDMA_PARAM1 = 4;
+	DSPDMA_PARAM2 = 0xFFFFFFFF;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_DEST;
+}
+
+void dspdma_op_copy_const32(uint32_t op_index, uint32_t constant, uint32_t dest) {
+	DSPDMA_TYPE = DSPDMA_OP_TYPE_COPY;
+	DSPDMA_INDEX = op_index;
+	DSPDMA_PARAM0 = DSPDMA_IOP_SOURCE_TYPE_CONST;
+	DSPDMA_PARAM1 = constant;
+	DSPDMA_PARAM2 = DSPDMA_IOP_DEST_TYPE_DEST;
+	DSPDMA_PARAM3 = dest;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
+}
+
+void dspdma_op_end(uint32_t op_index) {
+	DSPDMA_TYPE = DSPDMA_OP_TYPE_END;
+	DSPDMA_INDEX = op_index;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
+}
+
+void dspdma_trigger() {
+	DSPDMA_COMMAND = DSPDMA_COMMAND_TRIGGER;
+}
+
+void dma_clear_framebuffer(uint32_t value) {
+	DSPDMA_TRANSFER_SIZE = 256*192;
+	dspdma_set_dest32((void *) GPU_RAW_FRAMEBUFFER, 0);
+	dspdma_op_copy_const32(0, value, 0);
+	dspdma_op_end(1);
+	dspdma_trigger();
+}
+
+void loop_clear_framebuffer(uint32_t value) {
+	for (int i = 0; i < 256*192; i ++) {
+		GPU_RAW_FRAMEBUFFER[i] = value;
+	}
 }
 
 void main() {
@@ -103,14 +175,11 @@ void main() {
 	while (1) {
 		// wait for vsync
 		vsync_interrupt_wait();
-		
 		// clear framebuffer
-		for (int i = 0; i < 256*192; i ++) {
-			GPU_RAW_FRAMEBUFFER[i] = 0x00000000;
-		}
-		
+		dma_clear_framebuffer(0);
+		//loop_clear_framebuffer(0);
 		// draw yellow square
-		draw_square(interrupt_count % 236);
+		draw_square(frame % 236);
 		// present mmfb
 		GPU_PRESENT_MMFB = 1;
 	}

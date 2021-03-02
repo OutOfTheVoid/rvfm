@@ -7,6 +7,7 @@ mod gpu;
 mod raw_fb_renderer;
 mod fm_interrupt_bus;
 mod fb_present_renderer;
+mod dsp_dma;
 
 use application_gui::ApplicationGUI;
 

@@ -42,10 +42,10 @@ impl ApplicationGUI {
 			.with_visible(true)
 			.build(&event_loop).unwrap();
 		let cpu_wakeup = CpuWakeupHandle::new();
-		let mut mio = FmMemoryIO::new();
-		let logic_mio = mio.clone();
 		let mut interrupt_bus = FmInterruptBus::new();
 		let logic_interrupt_bus = interrupt_bus.clone();
+		let mut mio = FmMemoryIO::new(interrupt_bus.clone());
+		let logic_mio = mio.clone();
 		let (mut gpu, mut gpu_event_sink) = futures::executor::block_on(gpu::Gpu::new(&window, &mut mio, &mut interrupt_bus, cpu_wakeup.clone()));
 		let application_gui = ApplicationGUI {
 			inbox: logic_outbox,
