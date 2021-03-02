@@ -4,7 +4,7 @@ RVFM is a virtual console, including an RV32IMACF emulator written entirely in R
 
 ## Specs
 - RV32IMACF (incomplete)
-  - Dual core, eventually (seperate host threads)
+  - Dual core (on seperate host threads)
   - Interpreted (though JIT is not out of the question)
 - Sequentially consistent memory
   - Implemented through page-granularity locking on RAM
