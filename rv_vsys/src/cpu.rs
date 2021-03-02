@@ -195,7 +195,7 @@ impl CpuWakeupHandle {
 }
 
 impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
-	pub fn new(mio: MIO, int_bus: IntBus, wakeup_handle: CpuWakeupHandle) -> Cpu<MIO, IntBus> {
+	pub fn new(mio: MIO, int_bus: IntBus, wakeup_handle: CpuWakeupHandle, id: u32) -> Cpu<MIO, IntBus> {
 		Cpu {
 			xr: [0; 31],
 			fr: [0f32; 32],
@@ -205,7 +205,7 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 			csr_instrret: 0,
 			csr_cycle: 0,
 			csr_time_start: Instant::now(),
-			hart_id: 0,
+			hart_id: id,
 			trap_csrs: TrapCSRs::new(),
 			pending_exception: None,
 			waiting_for_interrupt: false,

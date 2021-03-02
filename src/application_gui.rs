@@ -41,12 +41,13 @@ impl ApplicationGUI {
 			.with_resizable(false)
 			.with_visible(true)
 			.build(&event_loop).unwrap();
-		let cpu_wakeup = CpuWakeupHandle::new();
+		let cpu0_wakeup = CpuWakeupHandle::new();
+		let cpu1_wakeup = CpuWakeupHandle::new();
 		let mut interrupt_bus = FmInterruptBus::new();
 		let logic_interrupt_bus = interrupt_bus.clone();
 		let mut mio = FmMemoryIO::new(interrupt_bus.clone());
 		let logic_mio = mio.clone();
-		let (mut gpu, mut gpu_event_sink) = futures::executor::block_on(gpu::Gpu::new(&window, &mut mio, &mut interrupt_bus, cpu_wakeup.clone()));
+		let (mut gpu, mut gpu_event_sink) = futures::executor::block_on(gpu::Gpu::new(&window, &mut mio, &mut interrupt_bus, cpu0_wakeup.clone()));
 		let application_gui = ApplicationGUI {
 			inbox: logic_outbox,
 			outbox: logic_inbox,
@@ -54,7 +55,7 @@ impl ApplicationGUI {
 		};
 		gpu.run();
 		let logic_thread = thread::spawn(move || {
-			let mut app_core = ApplicationCore::new(application_gui, logic_mio, logic_interrupt_bus, cpu_wakeup);
+			let mut app_core = ApplicationCore::new(application_gui, logic_mio, logic_interrupt_bus, cpu0_wakeup, cpu1_wakeup);
 			app_core.run();
 		});
 		event_loop.run(move |event, _, control_flow| {

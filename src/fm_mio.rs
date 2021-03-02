@@ -5,7 +5,7 @@ use atomic_counter::{AtomicCounter, ConsistentCounter};
 
 use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface};
+use crate::{cpu1_controller::{self, Cpu1Controller}, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
@@ -99,6 +99,7 @@ pub struct FmMemoryIO {
 	gpu_interface_device: Arc<OnceCell<GpuPeripheralInterface>>,
 	dsp_dma_device: Arc<DspDmaDeviceInterface>,
 	interrupt_bus_device: FmInterruptBus,
+	cpu1_controller_device: Arc<OnceCell<Cpu1Controller>>,
 	mem_lock_hold_d: UnsafeCell<MemLockHold>,
 	mem_lock_hold_i: UnsafeCell<MemLockHold>,
 	write_cycle_counter: Arc<ConsistentCounter>,
@@ -141,6 +142,7 @@ impl Clone for FmMemoryIO {
 			gpu_interface_device: self.gpu_interface_device.clone(),
 			dsp_dma_device: self.dsp_dma_device.clone(),
 			interrupt_bus_device: self.interrupt_bus_device.clone(),
+			cpu1_controller_device: self.cpu1_controller_device.clone(),
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: self.write_cycle_counter.clone(),
@@ -165,6 +167,7 @@ impl FmMemoryIO {
 			gpu_interface_device: Arc::new(OnceCell::default()),
 			dsp_dma_device: Arc::new(DspDmaDeviceInterface::new(DspDmaDevice::new(0xF002_0000))),
 			interrupt_bus_device: interrupt_bus,
+			cpu1_controller_device: Arc::new(OnceCell::new()),
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: Arc::new(ConsistentCounter::new(1)),
@@ -270,6 +273,10 @@ impl FmMemoryIO {
 	pub fn set_gpu_interface(&mut self, interface: GpuPeripheralInterface) {
 		self.gpu_interface_device.set(interface);
 	}
+	
+	pub fn set_cpu1_controller(&mut self, controller: Cpu1Controller) {
+		self.cpu1_controller_device.set(controller);
+	}
 }
 
 impl MemIO for FmMemoryIO {
@@ -340,10 +347,13 @@ impl MemIO for FmMemoryIO {
 					},
 					2 => {
 						self.dsp_dma_device.clone().read_32(peripheral_offset)
-					}
+					},
 					3 => {
 						self.interrupt_bus_device.read_32(peripheral_offset)
-					}
+					},
+					4 => {
+						self.cpu1_controller_device.get().unwrap().read_32(peripheral_offset)
+					},
 					_ => {
 						MemReadResult::ErrUnmapped
 					}
@@ -361,18 +371,6 @@ impl MemIO for FmMemoryIO {
 			0 => {
 				self.ram_sync_read_ifetch(addr);
 				MemReadResult::Ok(LE::read_u32(&self.ram.as_ref()[addr as usize ..]))
-			},
-			0xF => {
-				let peripheral_offset = addr & 0xFFFF;
-				let peripheral = (addr >> 16) & 0xFFF;
-				match peripheral {
-					0 => {
-						self.debug_device.as_ref().read_32(peripheral_offset)
-					},
-					_ => {
-						MemReadResult::ErrUnmapped
-					}
-				}
 			},
 			_ => MemReadResult::ErrUnmapped,
 		}
@@ -434,6 +432,9 @@ impl MemIO for FmMemoryIO {
 					},
 					3 => {
 						self.interrupt_bus_device.write_32(peripheral_offset, value)
+					},
+					4 => {
+						self.cpu1_controller_device.get().unwrap().clone().write_32(peripheral_offset, value)
 					}
 					_ => {
 						MemWriteResult::ErrUnmapped
