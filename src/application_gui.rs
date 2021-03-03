@@ -1,38 +1,37 @@
-use gpu::GPU_SCREENWIN_SCALE;
-use winit::{self, dpi::PhysicalSize, event::{self, Event, WindowEvent}, event_loop::{
+use winit::{self, dpi::PhysicalSize, event::{Event, WindowEvent}, event_loop::{
 		EventLoop,
 		ControlFlow,
 		EventLoopProxy
 	}, window::{
-		self,
-		Window,
 		WindowBuilder
 	}};
-
-use crate::{application_core::ApplicationCore, fm_mio::FmMemoryIO, fm_interrupt_bus::FmInterruptBus, gpu};
+	
+use crate::{application_core::ApplicationCore, fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO, gpu, sound_device::SoundDevice};
 use rv_vsys::CpuWakeupHandle;
 
-use std::{ops::Add, sync::mpsc, sync::mpsc::{channel, TryRecvError, Sender, Receiver}, thread, time::{Instant, Duration}};
+use std::{sync::mpsc, sync::mpsc::{TryRecvError, Sender, Receiver}, thread};
 
+#[allow(dead_code)]
 pub struct ApplicationGUI {
 	inbox: Sender<ApplicationGuiControlMessage>,
 	outbox: Receiver<ApplicationGuiEventMessage>,
 	loop_proxy: EventLoopProxy<()>,
 }
 
+#[allow(dead_code)]
 enum ApplicationGuiControlMessage {
 	SetMIO(FmMemoryIO),
 	SetFramebufferAddress(u32)
 }
 
+#[allow(dead_code)]
 enum ApplicationGuiEventMessage {
 	Close,
-	
 }
 
 impl ApplicationGUI {
 	pub fn run() {
-		let (gui_outbox, logic_inbox) = mpsc::channel();
+		let (_gui_outbox, logic_inbox) = mpsc::channel();
 		let (logic_outbox, gui_inbox) = mpsc::channel();
 		let event_loop = EventLoop::new();
 		let window = WindowBuilder::new()
@@ -47,20 +46,20 @@ impl ApplicationGUI {
 		let logic_interrupt_bus = interrupt_bus.clone();
 		let mut mio = FmMemoryIO::new(interrupt_bus.clone());
 		let logic_mio = mio.clone();
-		let (mut gpu, mut gpu_event_sink) = futures::executor::block_on(gpu::Gpu::new(&window, &mut mio, &mut interrupt_bus, cpu0_wakeup.clone()));
-		let application_gui = ApplicationGUI {
+		let (gpu, mut gpu_event_sink) = futures::executor::block_on(gpu::Gpu::new(&window, &mut mio, &mut interrupt_bus, cpu0_wakeup.clone()));
+		let _application_gui = ApplicationGUI {
 			inbox: logic_outbox,
 			outbox: logic_inbox,
 			loop_proxy: event_loop.create_proxy(),
 		};
 		gpu.run();
-		let logic_thread = thread::spawn(move || {
-			let mut app_core = ApplicationCore::new(application_gui, logic_mio, logic_interrupt_bus, cpu0_wakeup, cpu1_wakeup);
+		let sound_device = SoundDevice::new(None, cpu1_wakeup.clone(), &mut interrupt_bus).unwrap();
+		mio.set_sound_device(sound_device);
+		let _logic_thread = thread::spawn(move || {
+			let app_core = ApplicationCore::new(logic_mio, logic_interrupt_bus, cpu0_wakeup, cpu1_wakeup);
 			app_core.run();
 		});
 		event_loop.run(move |event, _, control_flow| {
-			let mut mem: Option<FmMemoryIO> = None;
-			let mut fb_addr: Option<u32> = None;
 			match event {
 				Event::MainEventsCleared => {
 					// redraw
@@ -95,9 +94,5 @@ impl ApplicationGUI {
 				}
 			}
 		});
-	}
-	
-	pub fn set_mio(&mut self, mio: FmMemoryIO) {
-		self.inbox.send(ApplicationGuiControlMessage::SetMIO(mio)).unwrap();
 	}
 }

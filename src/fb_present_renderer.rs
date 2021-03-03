@@ -1,7 +1,5 @@
-use core::slice;
 use shaderc;
 use wgpu;
-use crate::{fm_mio::FmMemoryIO};
 
 pub struct FramebufferPresentRenderer {
 	pipeline: wgpu::RenderPipeline,

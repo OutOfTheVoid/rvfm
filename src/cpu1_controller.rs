@@ -1,6 +1,6 @@
 use rv_vsys::{Cpu, MemWriteResult, MemReadResult};
 use crate::{application_core, fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO};
-use std::{thread, time::Duration};
+use std::{fmt, thread, time::Duration};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
@@ -9,12 +9,22 @@ enum Cpu1State {
 	Running,
 }
 
+impl fmt::Debug for Cpu1State {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Cpu1State::Running => f.write_str("Running"),
+			Cpu1State::Idle(..) => f.write_str("Idle"),
+		}
+	}
+}
+
+#[derive(Debug)]
 pub struct Cpu1ControllerInternal {
 	state: Cpu1State,
 	start_address: u32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Cpu1Controller {
 	lock: Arc<Mutex<Cpu1ControllerInternal>>
 }

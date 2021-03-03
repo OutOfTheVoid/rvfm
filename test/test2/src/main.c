@@ -46,7 +46,7 @@ void enable_interrupts() {
 void enable_external_interrupts() {
 	__asm__ volatile(
 		"li t0, 0x800\n"
-		"csrrs zero, mie, t0" ::: "t0"
+		"csrrs zero, mie, t0" ::: "x5"
 	);
 }
 

@@ -1,11 +1,11 @@
-use std::{cell::{UnsafeCell, RefCell}, fmt::Write, ops::{Deref, DerefMut}, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}};
+use std::{cell::UnsafeCell, ops::{Deref, DerefMut}, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use core::convert::{AsMut, AsRef};
 use atomic_counter::{AtomicCounter, ConsistentCounter};
 
 use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{cpu1_controller::{self, Cpu1Controller}, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface};
+use crate::{cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, sound_device::SoundDevice};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
@@ -81,17 +81,18 @@ enum MemLockHold {
 impl Drop for MemLockHold {
 	fn drop(&mut self) {
 		match self {
-			MemLockHold::Write(_, write_gaurd, write_cycle, write_cycle_counter) => {
+			MemLockHold::Write(_, _, write_cycle, write_cycle_counter) => {
 				let cycle = write_cycle_counter.inc();
 				write_cycle.store(cycle, Ordering::SeqCst);
 			},
-			MemLockHold::Read(_, read_gaurd) => {
+			MemLockHold::Read(..) => {
 			}
 			_ => {}
 		}
 	}
 }
 
+#[allow(dead_code)]
 pub struct FmMemoryIO {
 	ram: ArcMutPtr<[u8]>,
 	page_locks: ArcMutPtr<[Arc<PageGaurd>]>,
@@ -100,6 +101,7 @@ pub struct FmMemoryIO {
 	dsp_dma_device: Arc<DspDmaDeviceInterface>,
 	interrupt_bus_device: FmInterruptBus,
 	cpu1_controller_device: Arc<OnceCell<Cpu1Controller>>,
+	sound_device: Arc<OnceCell<SoundDevice>>,
 	mem_lock_hold_d: UnsafeCell<MemLockHold>,
 	mem_lock_hold_i: UnsafeCell<MemLockHold>,
 	write_cycle_counter: Arc<ConsistentCounter>,
@@ -143,6 +145,7 @@ impl Clone for FmMemoryIO {
 			dsp_dma_device: self.dsp_dma_device.clone(),
 			interrupt_bus_device: self.interrupt_bus_device.clone(),
 			cpu1_controller_device: self.cpu1_controller_device.clone(),
+			sound_device: self.sound_device.clone(),
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: self.write_cycle_counter.clone(),
@@ -165,9 +168,10 @@ impl FmMemoryIO {
 			page_locks: ArcMutPtr::new(lock_vec.into_boxed_slice()),
 			debug_device: ArcMutPtr::new(Box::new(DebugDevice::new())),
 			gpu_interface_device: Arc::new(OnceCell::default()),
-			dsp_dma_device: Arc::new(DspDmaDeviceInterface::new(DspDmaDevice::new(0xF002_0000))),
+			dsp_dma_device: Arc::new(DspDmaDeviceInterface::new(DspDmaDevice::new())),
 			interrupt_bus_device: interrupt_bus,
 			cpu1_controller_device: Arc::new(OnceCell::new()),
+			sound_device: Arc::new(OnceCell::default()),
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: Arc::new(ConsistentCounter::new(1)),
@@ -238,7 +242,7 @@ impl FmMemoryIO {
 				_ => {}
 			}
 			match &*self.mem_lock_hold_d.get() {
-				&MemLockHold::Read(page, _) => {
+				&MemLockHold::Read(..) => {
 					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
 					let page_gaurd = &self.page_locks.deref_mut_static()[page_num as usize];
 					*self.mem_lock_hold_d.get() = MemLockHold::Write(page_num, page_gaurd.lock.write(), page_gaurd.write_cycle.clone(), self.write_cycle_counter.clone());
@@ -257,6 +261,7 @@ impl FmMemoryIO {
 		}
 	}
 	
+	#[allow(dead_code)]
 	pub fn get_page_write_cycle(&self, addr: u32) -> usize {
 		let page_num = addr / 0x1000;
 		self.page_locks.deref_mut_static()[page_num as usize].write_cycle.load(Ordering::SeqCst)
@@ -271,11 +276,15 @@ impl FmMemoryIO {
 	}
 	
 	pub fn set_gpu_interface(&mut self, interface: GpuPeripheralInterface) {
-		self.gpu_interface_device.set(interface);
+		self.gpu_interface_device.set(interface).unwrap();
 	}
 	
 	pub fn set_cpu1_controller(&mut self, controller: Cpu1Controller) {
-		self.cpu1_controller_device.set(controller);
+		self.cpu1_controller_device.set(controller).unwrap();
+	}
+	
+	pub fn set_sound_device(&mut self, sound_device: SoundDevice) {
+		self.sound_device.set(sound_device).unwrap();
 	}
 }
 
@@ -283,16 +292,16 @@ impl MemIO for FmMemoryIO {
 	fn access_break(&mut self) {
 		unsafe {
 			match &*self.mem_lock_hold_d.get() {
-				MemLockHold::Read(page, _) => {
+				MemLockHold::Read(..) => {
 					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
 				},
-				MemLockHold::Write(page, ..) => {
+				MemLockHold::Write(..) => {
 					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
 				},
 				_ => {},
 			}
 			match &*self.mem_lock_hold_i.get() {
-				MemLockHold::Read(page, _) => {
+				MemLockHold::Read(..) => {
 					*self.mem_lock_hold_i.get() = MemLockHold::Clear;
 				},
 				MemLockHold::Write(..) => {
@@ -354,6 +363,9 @@ impl MemIO for FmMemoryIO {
 					4 => {
 						self.cpu1_controller_device.get().unwrap().read_32(peripheral_offset)
 					},
+					5 => {
+						self.sound_device.get().unwrap().read_32(peripheral_offset)
+					}
 					_ => {
 						MemReadResult::ErrUnmapped
 					}
@@ -435,7 +447,11 @@ impl MemIO for FmMemoryIO {
 					},
 					4 => {
 						self.cpu1_controller_device.get().unwrap().clone().write_32(peripheral_offset, value)
-					}
+					},
+					5 => {
+						let device = self.sound_device.clone();
+						device.get().unwrap().write_32(self, peripheral_offset, value)
+					},
 					_ => {
 						MemWriteResult::ErrUnmapped
 					}

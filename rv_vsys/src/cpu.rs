@@ -1,5 +1,6 @@
+#![allow(dead_code)]
 use crate::{MemIO, MemReadResult, MemWriteResult, Opcode, Op, OpImmFunct3, StoreFunct3, LoadFunct3, OpFunct3Funct7, BranchFunct3, LoadFpFunct3, StoreFpFunct3, SystemFunct3, SystemIntFunct7, InterruptBus};
-use std::{thread, time::{Duration, Instant}, sync::Arc};
+use std::{time::{Duration, Instant}, sync::Arc};
 use parking_lot::{Condvar, Mutex};
 
 const REG_NAMES: [&str; 32] = [
@@ -189,7 +190,7 @@ impl CpuWakeupHandle {
 	}
 	
 	pub fn cpu_wake(&mut self) {
-		let lock_gaurd = self.wakeup_lock.lock();
+		let _lock_gaurd = self.wakeup_lock.lock();
 		self.wakeup_cond.notify_all();
 	}
 }
@@ -228,7 +229,8 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 	}
 	
 	pub fn check_timer(&mut self) {
-		let t = self.get_time();
+		//let t = self.get_time();
+		// todo...
 	}
 	
 	pub fn run_loop(&mut self, inst_per_period: u32, period_length: Duration) {

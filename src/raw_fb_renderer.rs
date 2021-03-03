@@ -11,7 +11,7 @@ pub struct RawFBRenderer {
 }
 
 impl RawFBRenderer {
-	pub fn new(device: &wgpu::Device, swap_desc: &wgpu::SwapChainDescriptor) -> Result<Self, String> {
+	pub fn new(device: &wgpu::Device) -> Result<Self, String> {
 		let vs_src = include_str!("shaders/present.vert");
 		let fs_src = include_str!("shaders/present.frag");
 		let mut compiler = shaderc::Compiler::new().unwrap();

@@ -1,6 +1,7 @@
-use std::{cell::{RefCell, BorrowMutError}, cmp::{max, min}, sync::atomic::{AtomicBool, Ordering}, usize};
+#![allow(dead_code)]
+use std::{cell::RefCell, cmp::min, usize};
 
-use parking_lot::{Mutex, ReentrantMutex};
+use parking_lot::ReentrantMutex;
 use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use crate::{fm_mio::FmMemoryIO};
 
@@ -14,24 +15,6 @@ struct DspDmaMemIOParams {
 impl DspDmaMemIOParams {
 	pub fn get_addr(&self, transfer: u32) -> u32 {
 		self.addr.wrapping_add((transfer.wrapping_rem(self.restart_count) as i32).wrapping_mul(self.increment) as u32)
-	}
-	
-	pub fn get_max_addr(&self, transfer_size: u32, width: u32) -> u32 {
-		let max_transfer_index = max(transfer_size, self.restart_count - 1);
-		if self.increment >= 0 {
-			self.addr + ((max_transfer_index as i32).wrapping_mul(self.increment) as u32) + width - 1
-		} else {
-			self.addr + width - 1
-		}
-	}
-	
-	pub fn get_min_addr(&self, transfer_size: u32, width: u32) -> u32 {
-		let max_transfer_index = max(transfer_size, self.restart_count - 1);
-		if self.increment >= 0 {
-			self.addr + width - 1
-		} else {
-			self.addr + ((max_transfer_index as i32).wrapping_mul(self.increment) as u32)
-		}
 	}
 }
 
@@ -70,8 +53,8 @@ enum DspDmaOp {
 	Copy {source: DspDmaIOpSource, dest: DspDmaIOpDest},
 }
 
+#[allow(dead_code)]
 pub struct DspDmaDevice {
-	base_address: u32,
 	src_list: [DspDmaSource; 4],
 	dst_list: [DspDmaDest; 4],
 	copy_buffer_a: Box<[u32]>,
@@ -171,7 +154,7 @@ impl DspDmaDevice {
 		vec![0f32; BUFFER_SIZE].into_boxed_slice()
 	}
 	
-	pub fn new(base_address: u32) -> Self {
+	pub fn new() -> Self {
 		let mut ibuffers = Vec::new();
 		let mut fbuffers = Vec::new();
 		for _ in 0 .. BUFFER_COUNT {
@@ -179,7 +162,6 @@ impl DspDmaDevice {
 			fbuffers.push(Self::make_fbuffer());
 		}
 		DspDmaDevice {
-			base_address,
 			src_list: [DspDmaSource::None; SOURCE_COUNT],
 			dst_list: [DspDmaDest::None; DEST_COUNT],
 			copy_buffer_a: Self::make_ibuffer(),

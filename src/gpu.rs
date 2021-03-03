@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, mem::{self, swap}, sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}};
+use std::{borrow::BorrowMut, sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}};
 use std::thread;
 
 use parking_lot::Mutex;
@@ -9,12 +9,8 @@ use crate::{fm_mio::FmMemoryIO, raw_fb_renderer::RawFBRenderer, fm_interrupt_bus
 use rv_vsys::{CpuWakeupHandle, MemIO, MemWriteResult};
 
 pub struct Gpu {
-	instance: wgpu::Instance,
-	surface: wgpu::Surface,
-	adapter: wgpu::Adapter,
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
-	swap_chain_desc: wgpu::SwapChainDescriptor,
 	present_chain: GpuPresentChain,
 	current_present_fb: Option<wgpu::Texture>,
 	mio: FmMemoryIO,
@@ -24,7 +20,7 @@ pub struct Gpu {
 }
 
 #[derive(PartialEq, Clone, Copy)]
-enum Mode {
+pub enum Mode {
 	Disabled,
 	RawFBDisplay,
 }
@@ -193,12 +189,8 @@ impl Gpu {
 		let present_chain = GpuPresentChain::new();
 		int_bus.set_gpu_interrupts(interrupt_output);
 		(Gpu {
-			instance: instance,
-			surface: surface,
-			adapter: adapter,
 			device: device.clone(),
 			queue: queue.clone(),
-			swap_chain_desc: swap_desc,
 			present_chain: present_chain.clone(),
 			current_present_fb: None,
 			mio: mio.clone(),
@@ -262,7 +254,7 @@ impl Gpu {
 					self.swap_fb();
 				}
 				Mode::RawFBDisplay => {
-					self.raw_fb_renderer = Some(RawFBRenderer::new(&self.device, &self.swap_chain_desc).unwrap());
+					self.raw_fb_renderer = Some(RawFBRenderer::new(&self.device).unwrap());
 				}
 			}
 		}
@@ -331,7 +323,7 @@ impl Gpu {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GpuPeripheralInterface {
 	cmd_queue: mpsc::Sender<Command>,
 	sync_interrupt_enable: Arc<AtomicBool>
