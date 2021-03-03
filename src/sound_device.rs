@@ -115,7 +115,7 @@ impl SoundDevice {
 			let frame_buffer = cb_frame_buffer.lock();
 			if cb_enabled.load(Ordering::SeqCst) {
 				for i in 0 .. FRAME_SIZE * CHANNEL_COUNT {
-					data[i] = f32::from((*frame_buffer)[i]) / 32768.0;
+					data[i] = f32::from((*frame_buffer)[i]) * 0.00003051757;
 				}
 				cb_audio_frame.fetch_add(1, Ordering::SeqCst);
 				if cb_interrupt_enabled.load(Ordering::SeqCst) {
@@ -171,6 +171,7 @@ impl SoundDevice {
 						_ => return MemWriteResult::PeripheralError
 					};
 				}
+				mio.access_break();
 				MemWriteResult::Ok
 			}
 			_ => MemWriteResult::PeripheralError

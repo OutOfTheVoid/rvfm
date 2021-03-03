@@ -1,0 +1,82 @@
+Address       | Size                  | Description
+-----------------------------------------------------------------
+0x0000_0000   | 0x1000_0000 (256 MiB) | RAM
+0xF000_0000   | 0x0000_1000 (4 KiB)   | Debug Print Peripheral
+0xF001_0000   | 0x0000_1000 (4 KiB)   | GPU Peripheral
+0xF002_0000   | 0x0000_1000 (4 KiB)   | DSP DMA Peripheral
+0xF003_0000   | 0x0000_1000 (4 KiB)   | Interrupt Bus Peripheral
+0xF004_0000   | 0x0000_1000 (4 KiB)   | Core 1 Controller
+0xF005_0000   | 0x0000_1000 (4 KiB)   | Sound Peripheral
+
+
+Debug Peripheral
+================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Message Addr/Data | Address of message string or Data to print
+0x0004 | Message Length    | Length of message string to print
+0x0008 | Error             | Error code from device
+0x000C | Print Trigger     | Trigger to write debug message
+
+
+GPU Peripheral
+==============
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Mode              | GPU Mode set register
+0x0004 | Present MMFB      | GPU Present MMFB Trigger
+0x0008 | Sync Int Enable   | VSync Interrupt Enable
+
+
+DSP DMA Peripheral
+==================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Type              | Command data type
+0x0004 | Index             | Command index
+0x0008 | Param 0           | Command param 0
+0x000C | Param 1           | Command param 1
+0x0010 | Param 2           | Command param 2
+0x0014 | Param 3           | Command param 3
+0x0018 | Param 4           | Command param 4
+0x001C | Param 5           | Command param 5
+0x0020 | Command           | Command
+0x0024 | Transfer Size     | Tansfer Size
+0x0028 | Error             | Operation Error
+0x002C | Error Param 0     | Error param 0
+0x0030 | Error Param 1     | Error param 1
+0x0034 | Error Param 2     | Error param 2
+
+
+Interrupt Bus Peripheral
+========================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Vsync Int State   | State of Vsync Interrupt
+0x0004 | Sound Int State   | State of Sound Frame Interrupt
+
+
+CPU 1 Controller Peripheral
+===========================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Start Address     | Start Address for Core 1
+0x0004 | Startup Trigger   | Trigger to start Core 1
+0x0008 | Core State        | State of Core 1
+
+
+Sound Peripheral
+================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Enable            | Sound Enable
+0x0004 | Frame Counter     | Sound Frame Counter
+0x0008 | Int Enable        | Sound Interrupt Enable
+0x000C | Frame Pointer     | Sound Frame Pointer
+0x0010 | Copy Trigger      | Sound Frame Copy Trigger
