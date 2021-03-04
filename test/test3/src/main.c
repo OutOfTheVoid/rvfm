@@ -19,7 +19,7 @@ void debug_print_msg(const char * message, uint32_t length) {
 }
 
 void debug_print_u32(uint32_t value) {
-	DEBUG_IO_MSG_LENGTH = value;
+	DEBUG_IO_MSG_ADDRESS = value;
 	DEBUG_IO_WRITE = 1;
 }
 

@@ -72,7 +72,12 @@ impl DebugDevice {
 	
 	fn print_debug_u32(&mut self) {
 		let data = self.data.lock().unwrap();
-		println!("DEBUG: {}", data.message_len);
+		println!("DEBUG: {}", data.message_addr);
+	}
+	
+	fn print_debug_f32(&mut self) {
+		let data = self.data.lock().unwrap();
+		println!("DEBUG: {}", f32::from_bits(data.message_addr));
 	}
 	// feb 19th 1:00 pm
 	pub fn write_32(&mut self, offset: u32, value: u32, ram: &[u8]) -> MemWriteResult{
@@ -106,6 +111,10 @@ impl DebugDevice {
 							self.print_debug_u32();
 							MemWriteResult::Ok
 						},
+						2 => {
+							self.print_debug_f32();
+							MemWriteResult::Ok
+						}
 						_ => MemWriteResult::Ok
 					}
 				},

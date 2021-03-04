@@ -217,7 +217,8 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 			trap_csrs: TrapCSRs::new(),
 			pending_exception: None,
 			waiting_for_interrupt: false,
-			wakeup_handle: wakeup_handle
+			wakeup_handle: wakeup_handle,
+			fcsr: 0
 		}
 	}
 
