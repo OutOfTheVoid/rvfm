@@ -77,21 +77,17 @@ void init_sound_interrupt() {
 }
 
 void main() {
-	/*CORE2_CONTROLLER_START_ADDRESS = (uint32_t) &core2_start;
-	CORE2_CONTROLLER_RUN = 1;*/
+	CORE2_CONTROLLER_START_ADDRESS = (uint32_t) &core2_start;
+	CORE2_CONTROLLER_RUN = 1;
 	wfi();
 }
 
 void core2_main() {
-	int16_t silece[256];
-	for (int i = 0; i < 256; i ++) {
-		silece[i] = 0;
-	} 
 	const char * message = "Hello world from core 2!";
 	debug_print_msg(message, str_len(message));
 	init_sound_interrupt();
-	SOUND_ENABLE = 0;
-	/*while (1) {
+	SOUND_ENABLE = 1;
+	while (1) {
 		int frame = get_sound_frame();
 		if (frame >= (test_audio_len / 1024)) {
 			SOUND_ENABLE = 0;
@@ -102,6 +98,6 @@ void core2_main() {
 		sound_interrupt_wait();
 	}
 	disable_interrupts();
-	clear_pending_interrupts();*/
+	clear_pending_interrupts();
 	wfi();
 }

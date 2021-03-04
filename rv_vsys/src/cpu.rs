@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::{MemIO, MemReadResult, MemWriteResult, Opcode, Op, OpImmFunct3, StoreFunct3, LoadFunct3, OpFunct3Funct7, BranchFunct3, LoadFpFunct3, StoreFpFunct3, SystemFunct3, SystemIntFunct7, InterruptBus};
+use crate::{MemIO, MemReadResult, MemWriteResult, Opcode, Op, OpImmFunct3, StoreFunct3, LoadFunct3, OpFunct3Funct7, BranchFunct3, LoadFpFunct3, StoreFpFunct3, SystemFunct3, SystemIntFunct7, InterruptBus, FpFunct7};
 use std::{time::{Duration, Instant}, sync::Arc};
 use parking_lot::{Condvar, Mutex};
 
@@ -144,6 +144,12 @@ impl TrapCSRs {
 	}
 }
 
+const FFLAG_INEXACT: u32 = 0x01;
+const FFLAG_UNDERFLOW: u32 = 0x02;
+const FFLAG_OVERFLOW: u32 = 0x04;
+const FFLAG_DIVIDE_BY_ZERO: u32 = 0x08;
+const FFLAG_INVALID: u32 = 0x10;
+
 struct PendingInt {
 	pc: u32,
 	cause: u32,
@@ -165,6 +171,7 @@ pub struct Cpu <MIO: MemIO, IntBus: InterruptBus> {
 	pending_exception: Option<Exception>,
 	waiting_for_interrupt: bool,
 	wakeup_handle: CpuWakeupHandle,
+	fcsr: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -966,6 +973,83 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 							return self.write_csr(csr, csr_value_new);
 						},
 					}
+				},
+				Op::MAdd => {
+					let rd = opcode.rd();
+					let rm = opcode.fp_rm();
+					let rs1 = opcode.rs1();
+					let rs2 = opcode.rs2();
+					let rs3 = opcode.rs3();
+					// todo
+				},
+				Op::MSub => {
+					let rd = opcode.rd();
+					let rm = opcode.fp_rm();
+					let rs1 = opcode.rs1();
+					let rs2 = opcode.rs2();
+					let rs3 = opcode.rs3();
+					// todo
+				},
+				Op::NMAdd => {
+					let rd = opcode.rd();
+					let rm = opcode.fp_rm();
+					let rs1 = opcode.rs1();
+					let rs2 = opcode.rs2();
+					let rs3 = opcode.rs3();
+					// todo
+				},
+				Op::NMSub => {
+					let rd = opcode.rd();
+					let rm = opcode.fp_rm();
+					let rs1 = opcode.rs1();
+					let rs2 = opcode.rs2();
+					let rs3 = opcode.rs3();
+					// todo
+				},
+				Op::OpFp => {
+					let rd = opcode.rd();
+					let rs1 = opcode.rs1();
+					let rs2 = opcode.rs2();
+					let rm = opcode.fp_rm();
+					let funct7 = opcode.funct7_fp();
+					match funct7 {
+						FpFunct7::Add_S => {
+							// todo
+						},
+						FpFunct7::Sub_S => {
+							// todo
+						},
+						FpFunct7::Mul_S => {
+							// todo
+						},
+						FpFunct7::Div_S => {
+							// todo
+						},
+						FpFunct7::Sqrt_S => {
+							// todo
+						},
+						FpFunct7::Sign_S => {
+							// todo
+						},
+						FpFunct7::MinMax_S => {
+							// todo
+						},
+						FpFunct7::CvtW_S => {
+							// todo
+						},
+						FpFunct7::MvXWClass_S => {
+							// todo
+						},
+						FpFunct7::Cmp_S => {
+							// todo
+						},
+						FpFunct7::CvtS_W => {
+							// todo
+						},
+						FpFunct7::MvWX_S => {
+							// todo
+						},
+					}
 				}
 				_ => {	
 					if cfg!(feature = "cpu_debug") { println!("unknown opcode: {:#08}", opcode_value); }
@@ -1040,15 +1124,15 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 			// FPU
 			// FFlags: floating point accrued exceptions
 			0x001 => {
-				0 
+				self.fcsr & 0x1F
 			},
 			// FRM: floating point rounding mode
 			0x002 => {
-				0
+				(self.fcsr >> 5) & 0x07
 			},
 			// fcsr: floating point control/status
 			0x003 => {
-				0
+				self.fcsr
 			},
 			
 			// mstatus: machine status
@@ -1135,7 +1219,6 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 			0xBFF => {
 				return false;
 			},
-			// mstatus: machine status
 			0x300 => {
 				let mut fixed_value = (value & (MSTATUS_MIE | MSTATUS_MPIE | MSTATUS_FS_MASK)) | MSTATUS_MPP;
 				if (fixed_value & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY {
@@ -1157,6 +1240,15 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 				let fixed_value = value & (MIP_MSIP | MIP_MTIP | MIP_MEIP);
 				self.trap_csrs.mip = fixed_value;
 			},
+			0x001 => {
+				self.fcsr = (self.fcsr & 0xE0) | (value & 0x1F);
+			},
+			0x002 => {
+				self.fcsr = (self.fcsr & 0x1F) | (value & 0x07) << 5;
+			},
+			0x003 => {
+				self.fcsr = value & 0xFF;
+			}
 			_ => {
 			}
 		}

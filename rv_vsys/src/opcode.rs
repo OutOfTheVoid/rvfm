@@ -139,6 +139,40 @@ pub enum SystemIntFunct7 {
 	MRet             = 0b0011000,
 }
 
+#[derive(FromPrimitive, ToPrimitive, Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum FpFunct7 {
+	Add_S       = 0b00000_00,
+	Sub_S       = 0b00001_00,
+	Mul_S       = 0b00010_00,
+	Div_S       = 0b00011_00,
+	Sqrt_S      = 0b01011_00,
+	Sign_S      = 0b00100_00,
+	MinMax_S    = 0b00101_00,
+	CvtW_S      = 0b11000_00,
+	MvXWClass_S = 0b11100_00,
+	Cmp_S       = 0b10100_00,
+	CvtS_W      = 0b11010_00,
+	MvWX_S      = 0b11110_00,
+}
+
+#[derive(FromPrimitive, ToPrimitive, Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum FpRm {
+	ToNearestTieEven         = 0b000,
+	ToZero                   = 0b001,
+	Down                     = 0b010,
+	Up                       = 0b011,
+	ToNearestTieMaxMagnitude = 0b100,
+	Dynamic                  = 0b111,
+}
+
+#[derive(FromPrimitive, ToPrimitive, Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum FpFunct5 {
+	
+}
+
 fn bitfield(x: u32, count: u32, src_bit: u32, dst_bit: u32) -> u32 {
 	let mask = (1u32 << count).wrapping_sub(1);
 	let y = x >> src_bit;
@@ -166,6 +200,10 @@ impl Opcode {
 
 	pub fn s_imm_high(&self) -> u32 {
 		bitfield(self.value, 7, 25, 0)
+	}
+	
+	pub fn fp_rm(&self) -> FpRm {
+		FpRm::from_u32(bitfield(self.value, 3, 12, 0)).unwrap()
 	}
 
 	pub fn s_imm_signed(&self) -> i32 {
@@ -223,6 +261,10 @@ impl Opcode {
 	pub fn funct7_system_int(&self) -> SystemIntFunct7 {
 		SystemIntFunct7::from_u32(self.funct7()).unwrap()
 	}
+	
+	pub fn funct7_fp(&self) -> FpFunct7 {
+		FpFunct7::from_u32(self.funct7()).unwrap()
+	}
 
 	pub fn rs1(&self) -> u32 {
 		bitfield(self.value, 5, 15, 0)
@@ -246,6 +288,10 @@ impl Opcode {
 
 	pub fn rs2(&self) -> u32 {
 		bitfield(self.value, 5, 20, 0)
+	}
+	
+	pub fn rs3(&self) -> u32 {
+		bitfield(self.value, 5, 27, 0)
 	}
 
 	pub fn i_imm(&self) -> u32 {
