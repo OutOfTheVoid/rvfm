@@ -1,18 +1,42 @@
 use cpal::{self, traits::{DeviceTrait, HostTrait, StreamTrait}};
 use rv_vsys::{CpuWakeupHandle, MemIO, MemReadResult, MemWriteResult};
 use core::f32;
-use std::{f32::consts::PI, sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering}}};
+use std::{mem::{self}, sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering}}};
 use std::fmt::{self, Debug, Formatter};
 use parking_lot::{Mutex};
+use atom::{Atom, IntoRawPtr, FromRawPtr};
 
 use crate::{fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO};
+
+struct AudioFrame {
+	pub data: Box<[i16]>
+}
+
+impl IntoRawPtr for AudioFrame {
+	fn into_raw(self) -> *mut () {
+		let Self{mut data} = self;
+		let ptr = data.as_mut_ptr() as *mut ();
+		std::mem::forget(data);
+		ptr
+	}
+}
+
+impl FromRawPtr for AudioFrame {
+	unsafe fn from_raw(ptr: *mut ()) -> Self {
+		let slice_ptr = core::ptr::slice_from_raw_parts_mut(ptr as *mut i16, FRAME_SIZE * CHANNEL_COUNT);
+		AudioFrame {
+			data: Box::from_raw(slice_ptr)
+		}
+	}
+}
 
 #[allow(dead_code)]
 pub struct SoundDevice {
 	enabled: Arc<AtomicBool>,
 	interrupt_enabled: Arc<AtomicBool>,
 	stream: cpal::Stream,
-	frame_buffer: Arc<Mutex<Box<[i16]>>>,
+	io_framebuffer: Arc<Atom<AudioFrame>>,
+	write_framebuffer: Arc<Mutex<Option<AudioFrame>>>,
 	frame_count: Arc<AtomicUsize>,
 	frame_ptr: Arc<AtomicU32>,
 }
@@ -67,10 +91,16 @@ impl SoundInterruptOutput {
 	}
 }
 
-const FRAME_SIZE: usize = 128;
+const FRAME_SIZE: usize = 512;
 const CHANNEL_COUNT: usize = 2;
 
 impl SoundDevice {
+	fn new_framebuffer() -> AudioFrame {
+		AudioFrame {
+			data: vec![0i16; FRAME_SIZE * CHANNEL_COUNT].into_boxed_slice()
+		}
+	}
+	
 	pub fn new(device: Option<String>, mut cpu_wake_handle: CpuWakeupHandle, interrupt_bus: &mut FmInterruptBus) -> Result<Self, String> {
 		let host = cpal::default_host();
 		let device = match device {
@@ -99,11 +129,13 @@ impl SoundDevice {
 				}
 			}
 		};
-		let frame_buffer = Arc::new(Mutex::new(vec![0i16; FRAME_SIZE * CHANNEL_COUNT].into_boxed_slice()));
+		let io_framebuffer = Arc::new(Atom::new(Self::new_framebuffer()));
+		let write_framebuffer = Arc::new(Mutex::new(Some(Self::new_framebuffer())));
 		let audio_frame = Arc::new(AtomicUsize::new(0));
 		let enabled = Arc::new(AtomicBool::new(false));
 		let interrupt_enabled = Arc::new(AtomicBool::new(false));
-		let cb_frame_buffer = frame_buffer.clone();
+		let cb_io_framebuffer = io_framebuffer.clone();
+		let mut cb_framebuffer = Some(Self::new_framebuffer());
 		let cb_audio_frame = audio_frame.clone();
 		let cb_enabled = enabled.clone();
 		let cb_interrupt_enabled = interrupt_enabled.clone();
@@ -112,10 +144,18 @@ impl SoundDevice {
 			sample_rate: cpal::SampleRate(44100),
 			buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
 		}, move |data: &mut [f32], _| {
-			let frame_buffer = cb_frame_buffer.lock();
 			if cb_enabled.load(Ordering::SeqCst) {
-				for i in 0 .. FRAME_SIZE * CHANNEL_COUNT {
-					data[i] = f32::from((*frame_buffer)[i]) * 0.00003051757;
+				let mut cb_fb_swap = None;
+				std::mem::swap(&mut cb_fb_swap, &mut cb_framebuffer);
+				let cb_fb_swap = cb_fb_swap.unwrap();
+				let mut cb_fb_swap = Some(cb_io_framebuffer.swap(cb_fb_swap, Ordering::SeqCst).unwrap());
+				std::mem::swap(&mut cb_fb_swap, &mut cb_framebuffer);
+				let framebuffer = cb_framebuffer.as_ref().unwrap();
+				{
+					let frame_data = &framebuffer.data;
+					for i in 0 .. FRAME_SIZE * CHANNEL_COUNT {
+						data[i] = f32::from(frame_data[i]) * 0.00003051757;
+					}
 				}
 				cb_audio_frame.fetch_add(1, Ordering::SeqCst);
 				if cb_interrupt_enabled.load(Ordering::SeqCst) {
@@ -137,7 +177,8 @@ impl SoundDevice {
 			enabled,
 			interrupt_enabled,
 			stream,
-			frame_buffer,
+			io_framebuffer,
+			write_framebuffer,
 			frame_count: audio_frame,
 			frame_ptr: Arc::new(AtomicU32::new(0)),
 		})
@@ -161,17 +202,21 @@ impl SoundDevice {
 				MemWriteResult::Ok
 			},
 			SOUND_OFFSET_COPY_BUFF => {
-				let mut buffer = self.frame_buffer.lock();
+				let mut write_fb = self.write_framebuffer.lock();
+				let write_fb_data = &mut (*write_fb).as_mut().unwrap().data;
 				let addr = self.frame_ptr.load(Ordering::SeqCst);
 				for i in 0 .. (FRAME_SIZE * CHANNEL_COUNT) as u32 {
 					match mio.read_16(addr + i * 2) {
 						MemReadResult::Ok(value) => {
-							(*buffer)[i as usize] = value as i16;
+							(write_fb_data)[i as usize] = value as i16;
 						},
 						_ => return MemWriteResult::PeripheralError
 					};
 				}
 				mio.access_break();
+				let mut wfb_swap = None;
+				mem::swap(&mut wfb_swap, &mut *write_fb);
+				*write_fb = Some(self.io_framebuffer.swap(wfb_swap.unwrap(), Ordering::SeqCst).unwrap());
 				MemWriteResult::Ok
 			}
 			_ => MemWriteResult::PeripheralError

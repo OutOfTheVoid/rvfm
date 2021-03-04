@@ -47,6 +47,8 @@ pub struct GpuWindowEventSink {
 	sync_interrupt_enable: Arc<AtomicBool>
 }
 
+const DEFAULT_CLEAR_COLOR: wgpu::Color = wgpu::Color {r: 0.0, g: 0.0, b: 0.1, a: 1.0};
+
 impl GpuWindowEventSink {
 	pub fn render_event(&mut self) {
 		self.present_counter.fetch_add(1, Ordering::SeqCst);
@@ -66,6 +68,26 @@ impl GpuWindowEventSink {
 				self.last_present_tex = Some(texture);
 			},
 			None => {
+				let mut command_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
+					label: Some("GpuWindowEventSink::render_event()")
+				});
+				let framebuffer = self.swap_chain.get_current_frame().unwrap().output;
+				{
+					let mut _render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+						color_attachments: &[
+							wgpu::RenderPassColorAttachmentDescriptor {
+								attachment: &framebuffer.view,
+								resolve_target: None,
+								ops: wgpu::Operations {
+									load: wgpu::LoadOp::Clear(DEFAULT_CLEAR_COLOR),
+									store: true
+								}
+							}
+						],
+						depth_stencil_attachment: None,
+					});
+				}
+				self.queue.submit(Some(command_encoder.finish()));
 			}
 		}
 	}
@@ -282,9 +304,7 @@ impl Gpu {
 						attachment: &fb_view,
 						resolve_target: None,
 						ops: wgpu::Operations {
-							load: wgpu::LoadOp::Clear(wgpu::Color {
-								r: 0.0, g: 0.0, b: 0.1, a: 1.0
-							}),
+							load: wgpu::LoadOp::Clear(DEFAULT_CLEAR_COLOR),
 							store: true
 						}
 					}
