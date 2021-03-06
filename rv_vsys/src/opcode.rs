@@ -470,7 +470,7 @@ pub enum FpRm {
 }
 
 impl FpRm {
-	fn from_raw(raw: u32) -> Self {
+	pub fn from_raw(raw: u32) -> Self {
 		match raw {
 			0b000 => Self::ToNearestTieEven,
 			0b001 => Self::ToZero,
@@ -484,13 +484,145 @@ impl FpRm {
 	
 	fn to_raw(&self) -> u32 {
 		match self {
-			ToNearestTieEven         => 0b000,
-			ToZero                   => 0b001,
-			Down                     => 0b010,
-			Up                       => 0b011,
-			ToNearestTieMaxMagnitude => 0b100,
-			Dynamic                  => 0b111,
-			Unknown                  => 0b101,
+			Self::ToNearestTieEven         => 0b000,
+			Self::ToZero                   => 0b001,
+			Self::Down                     => 0b010,
+			Self::Up                       => 0b011,
+			Self::ToNearestTieMaxMagnitude => 0b100,
+			Self::Dynamic                  => 0b111,
+			Self::Unknown                  => 0b101,
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum FMvXWClassFunct3 {
+	MvXW,
+	Class,
+	Unknown,
+}
+
+impl FMvXWClassFunct3 {
+	pub fn from_raw(raw: u32) -> Self {
+		match raw {
+			0b000 => Self::MvXW,
+			0b001 => Self::Class,
+			_ => Self::Unknown,
+		}
+	}
+	
+	fn to_raw(&self) -> u32 {
+		match self {
+			Self::MvXW => 0b000,
+			Self::Class => 0b001,
+			Self::Unknown => 0b010,
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum FpSignFunct3 {
+	SignFromRs2, // J
+	SignFromNotRs2, // JN
+	SignFromRs1XorRs2, // JX
+	Unknown,
+}
+
+impl FpSignFunct3 {
+	fn from_raw(raw: u32) -> Self {
+		match raw {
+			0b000 => Self::SignFromRs2,
+			0b001 => Self::SignFromNotRs2,
+			0b010 => Self::SignFromRs1XorRs2,
+			_ => Self::Unknown
+		}
+	}
+	
+	fn to_raw(&self) -> u32 {
+		match self {
+			Self::SignFromRs2 => 0b000,
+			Self::SignFromNotRs2 => 0b001,
+			Self::SignFromRs1XorRs2 => 0b010,
+			Self::Unknown => 0b011,
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum FpMinMaxFunct3 {
+	Min,
+	Max,
+	Unknown,
+}
+
+impl FpMinMaxFunct3 {
+	fn from_raw(raw: u32) -> Self {
+		match raw {
+			0b000 => Self::Min,
+			0b001 => Self::Max,
+			_ => Self::Unknown
+		}
+	}
+	
+	fn to_raw(&self) -> u32 {
+		match self {
+			Self::Min => 0b000,
+			Self::Max => 0b001,
+			Self::Unknown => 0b010,
+		}
+	}
+}
+
+pub enum FCvtType {
+	Signed,
+	Unsigned,
+	Unknown,
+}
+
+impl FCvtType {
+	fn from_raw(raw: u32) -> Self {
+		match raw {
+			0b000 => Self::Signed,
+			0b001 => Self::Unsigned,
+			_ => Self::Unknown
+		}
+	}
+	
+	fn to_raw(&self) -> u32 {
+		match self {
+			Self::Signed => 0b000,
+			Self::Unsigned => 0b001,
+			Self::Unknown => 0b010,
+		}
+	}
+}
+
+pub enum FpCmpFunct3 {
+	LEq,
+	Lt,
+	Eq,
+	Unknown
+}
+
+impl FpCmpFunct3 {
+	fn from_raw(raw: u32) -> Self {
+		match raw {
+			0b000 => Self::LEq,
+			0b001 => Self::Lt,
+			0b010 => Self::Eq,
+			_ => Self::Unknown
+		}
+	}
+	
+	fn to_raw(&self) -> u32 {
+		match self {
+			Self::LEq => 0b000,
+			Self::Lt => 0b001,
+			Self::Eq => 0b010,
+			Self::Unknown => 0b011,
 		}
 	}
 }
@@ -526,6 +658,22 @@ impl Opcode {
 	
 	pub fn fp_rm(&self) -> FpRm {
 		FpRm::from_raw(bitfield(self.value, 3, 12, 0))
+	}
+	
+	pub fn funct3_fpsign(&self) -> FpSignFunct3 {
+		FpSignFunct3::from_raw(bitfield(self.value, 3, 12, 0))
+	}
+	
+	pub fn funct3_fpminmax(&self) -> FpMinMaxFunct3 {
+		FpMinMaxFunct3::from_raw(bitfield(self.value, 3, 12, 0))
+	}
+	
+	pub fn funct3_fmvxwclass(&self) -> FMvXWClassFunct3 {
+		FMvXWClassFunct3::from_raw(bitfield(self.value, 3, 12, 0))
+	}
+	
+	pub fn funct3_fpcmp(&self) -> FpCmpFunct3 {
+		FpCmpFunct3::from_raw(bitfield(self.value, 3, 12, 0))
 	}
 
 	pub fn s_imm_signed(&self) -> i32 {
@@ -610,6 +758,10 @@ impl Opcode {
 
 	pub fn rs2(&self) -> u32 {
 		bitfield(self.value, 5, 20, 0)
+	}
+	
+	pub fn rs2_fcvtws(&self) -> FCvtType {
+		FCvtType::from_raw(bitfield(self.value, 5, 20, 0))
 	}
 	
 	pub fn rs3(&self) -> u32 {

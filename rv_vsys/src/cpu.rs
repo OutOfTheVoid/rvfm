@@ -1,6 +1,7 @@
 #![allow(dead_code)]
-use crate::{MemIO, MemReadResult, MemWriteResult, Opcode, Op, OpImmFunct3, StoreFunct3, LoadFunct3, OpFunct3Funct7, BranchFunct3, LoadFpFunct3, StoreFpFunct3, SystemFunct3, SystemIntFunct7, InterruptBus, FpFunct7};
+use crate::{MemIO, MemReadResult, MemWriteResult, Opcode, Op, OpImmFunct3, StoreFunct3, LoadFunct3, OpFunct3Funct7, BranchFunct3, LoadFpFunct3, StoreFpFunct3, SystemFunct3, SystemIntFunct7, InterruptBus, FpFunct7, FpSignFunct3, FpMinMaxFunct3, FCvtType, FpRm, FMvXWClassFunct3, FpCmpFunct3};
 use std::{time::{Duration, Instant}, sync::Arc};
+use num::Signed;
 use parking_lot::{Condvar, Mutex};
 
 const REG_NAMES: [&str; 32] = [
@@ -1033,7 +1034,7 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 				let rd = opcode.rd();
 				let rs1 = opcode.rs1();
 				let rs2 = opcode.rs2();
-				let rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
+				//let rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
 				let funct7 = opcode.funct7_fp();
 				match funct7 {
 					FpFunct7::Add_S => {
@@ -1041,48 +1042,208 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 						let b = self.get_fpr(rs2);
 						let result = a + b;
 						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::Sub_S => {
 						let a = self.get_fpr(rs1);
 						let b = self.get_fpr(rs2);
 						let result = a - b;
 						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::Mul_S => {
 						let a = self.get_fpr(rs1);
 						let b = self.get_fpr(rs2);
 						let result = a * b;
 						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::Div_S => {
 						let a = self.get_fpr(rs1);
 						let b = self.get_fpr(rs2);
 						let result = a / b;
 						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::Sqrt_S => {
-						// todo
+						let x = self.get_fpr(rs1);
+						let result = f32::sqrt(x);
+						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::Sign_S => {
-						// todo
+						let sign_source = opcode.funct3_fpsign();
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let result = match sign_source {
+							FpSignFunct3::SignFromRs2 => {
+								if b.is_sign_negative() {
+									- a.abs()
+								} else {
+									a.abs()
+								}
+							}, // J
+							FpSignFunct3::SignFromNotRs2 => {
+								if b.is_sign_negative() {
+									a.abs()
+								} else {
+									- a.abs()
+								}
+							}, // JN
+							FpSignFunct3::SignFromRs1XorRs2 => {
+								if b.is_sign_negative() {
+									- a
+								} else {
+									a
+								}
+							}, // JX
+							FpSignFunct3::Unknown => {
+								return self.illegal_instruction(opcode);
+							},
+						};
+						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::MinMax_S => {
-						// todo
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let minmax = opcode.funct3_fpminmax();
+						let result = match minmax {
+							FpMinMaxFunct3::Min => f32::min(a, b),
+							FpMinMaxFunct3::Max => f32::max(a, b),
+							FpMinMaxFunct3::Unknown => {
+								return self.illegal_instruction(opcode);
+							}
+						};
+						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::CvtW_S => {
-						// todo
+						let conversion = opcode.rs2_fcvtws();
+						let fp_val = self.get_fpr(rs1);
+						let mut rm = opcode.fp_rm();
+						if let FpRm::Dynamic = rm {
+							rm = FpRm::from_raw((self.fcsr & 0xFF) >> 5)
+						}
+						let fp_val_rounded = match rm {
+							FpRm::ToNearestTieEven => f32::round(fp_val),
+							FpRm::ToNearestTieMaxMagnitude => f32::round(fp_val),
+							FpRm::ToZero => if fp_val >= 0.0 {
+								f32::floor(fp_val)
+							} else {
+								f32::ceil(fp_val)
+							},
+							FpRm::Up => f32::ceil(fp_val),
+							FpRm::Down => f32::floor(fp_val),
+							FpRm::Unknown | FpRm::Dynamic => {
+								return self.illegal_instruction(opcode);
+							}
+						};
+						match conversion {
+							FCvtType::Signed => {
+								let i32_val = fp_val_rounded as i32;
+								self.set_gpr(rd, i32_val as u32);
+							},
+							FCvtType::Unsigned => {
+								let u32_val = fp_val_rounded as u32;
+								self.set_gpr(rd, u32_val);
+							},
+							FCvtType::Unknown => {
+								return self.illegal_instruction(opcode);
+							}
+						}
+						self.pc += 4;
 					},
 					FpFunct7::MvXWClass_S => {
-						// todo
+						let sub_op = opcode.funct3_fmvxwclass();
+						match sub_op {
+							FMvXWClassFunct3::MvXW => {
+								if rs2 != 0 {
+									return self.illegal_instruction(opcode);
+								}
+								let f_val = self.get_fpr(rs1);
+								let i_val = f_val.to_bits();
+								self.set_gpr(rd, i_val);
+							},
+							FMvXWClassFunct3::Class => {
+								if rs2 != 0 {
+									return self.illegal_instruction(opcode);
+								}
+								let val = self.get_fpr(rs1);
+								let result = 1 << match val {
+									_ if val == f32::NEG_INFINITY => 0,
+									_ if val == -0.0 => 3,
+									_ if val == 0.0 => 4,
+									_ if val == f32::INFINITY => 7,
+									v => {
+										if v.is_nan() {
+											8
+										} else {
+											if v.is_normal() {
+												if v.is_negative() {
+													1
+												} else {
+													6
+												}
+											} else {
+												if v.is_negative() {
+													2
+												} else {
+													5
+												}
+											}
+										}
+									}
+								};
+								self.set_gpr(rd, result);
+							},
+							FMvXWClassFunct3::Unknown => {
+								return self.illegal_instruction(opcode);
+							}
+						}
+						self.pc += 4;
 					},
 					FpFunct7::Cmp_S => {
-						// todo
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let comparison = opcode.funct3_fpcmp();
+						let result = match comparison {
+							FpCmpFunct3::Eq => a == b,
+							FpCmpFunct3::Lt => a < b,
+							FpCmpFunct3::LEq => a <= b,
+							FpCmpFunct3::Unknown => {
+								return self.illegal_instruction(opcode);
+							}
+						};
+						self.set_gpr(rd, if result {1} else {0});
+						self.pc += 4;
 					},
 					FpFunct7::CvtS_W => {
-						// todo
+						let conversion = opcode.rs2_fcvtws();
+						let result = match conversion {
+							FCvtType::Signed => {
+								let i32_val = self.get_gpr(rs1) as i32;
+								i32_val as f32
+							},
+							FCvtType::Unsigned => {
+								let u32_val = self.get_gpr(rs1);
+								u32_val as f32
+							},
+							FCvtType::Unknown => {
+								return self.illegal_instruction(opcode);
+							}
+						};
+						self.set_fpr(rd, result);
+						self.pc += 4;
 					},
 					FpFunct7::MvWX_S => {
-						// todo
+						if rs2 != 0 {
+							return self.illegal_instruction(opcode);
+						}
+						let i_val = self.get_gpr(rs1);
+						let f_val = f32::from_bits(i_val);
+						self.set_fpr(rd, f_val);
+						self.pc += 4;
 					},
 					FpFunct7::Unknown => {
 						return self.illegal_instruction(opcode);
