@@ -249,59 +249,59 @@ impl AsmJit {
 	}
 	
 	pub fn sb(&mut self, rs: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.s_type(Op::Store, StoreFunct3::Byte.to_u32().unwrap(), rbase, rs, offset)
+		self.s_type(Op::Store, StoreFunct3::Byte.to_raw(), rbase, rs, offset)
 	}
 	
 	pub fn sh(&mut self, rs: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.s_type(Op::Store, StoreFunct3::Half.to_u32().unwrap(), rbase, rs, offset)
+		self.s_type(Op::Store, StoreFunct3::Half.to_raw(), rbase, rs, offset)
 	}
 	
 	pub fn sw(&mut self, rs: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.s_type(Op::Store, StoreFunct3::Word.to_u32().unwrap(), rbase, rs, offset)
+		self.s_type(Op::Store, StoreFunct3::Word.to_raw(), rbase, rs, offset)
 	}
 	
 	pub fn lb(&mut self, rd: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.i_type(Op::Load, rd, LoadFunct3::Byte.to_u32().unwrap(), rbase, offset)
+		self.i_type(Op::Load, rd, LoadFunct3::Byte.to_raw(), rbase, offset)
 	}
 	
 	pub fn lh(&mut self, rd: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.i_type(Op::Load, rd, LoadFunct3::Half.to_u32().unwrap(), rbase, offset)
+		self.i_type(Op::Load, rd, LoadFunct3::Half.to_raw(), rbase, offset)
 	}
 	
 	pub fn lw(&mut self, rd: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.i_type(Op::Load, rd, LoadFunct3::Word.to_u32().unwrap(), rbase, offset)
+		self.i_type(Op::Load, rd, LoadFunct3::Word.to_raw(), rbase, offset)
 	}
 	
 	pub fn lbu(&mut self, rd: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.i_type(Op::Load, rd, LoadFunct3::ByteUnsigned.to_u32().unwrap(), rbase, offset)
+		self.i_type(Op::Load, rd, LoadFunct3::ByteUnsigned.to_raw(), rbase, offset)
 	}
 	
 	pub fn lhu(&mut self, rd: u32, rbase: u32, offset: i32) -> AsmResult {
-		self.i_type(Op::Load, rd, LoadFunct3::HalfUnsigned.to_u32().unwrap(), rbase, offset)
+		self.i_type(Op::Load, rd, LoadFunct3::HalfUnsigned.to_raw(), rbase, offset)
 	}
 	
 	pub fn beq(&mut self, rs1: u32, rs2: u32, offset: i32) -> AsmResult {
-		self.b_type(Op::Branch, offset, BranchFunct3::Eq.to_u32().unwrap(), rs1, rs2)
+		self.b_type(Op::Branch, offset, BranchFunct3::Eq.to_raw(), rs1, rs2)
 	}
 	
 	pub fn bne(&mut self, rs1: u32, rs2: u32, offset: i32) -> AsmResult {
-		self.b_type(Op::Branch, offset, BranchFunct3::NEq.to_u32().unwrap(), rs1, rs2)
+		self.b_type(Op::Branch, offset, BranchFunct3::NEq.to_raw(), rs1, rs2)
 	}
 	
 	pub fn blt(&mut self, rs1: u32, rs2: u32, offset: i32) -> AsmResult {
-		self.b_type(Op::Branch, offset, BranchFunct3::Lt.to_u32().unwrap(), rs1, rs2)
+		self.b_type(Op::Branch, offset, BranchFunct3::Lt.to_raw(), rs1, rs2)
 	}
 	
 	pub fn bge(&mut self, rs1: u32, rs2: u32, offset: i32) -> AsmResult {
-		self.b_type(Op::Branch, offset, BranchFunct3::GEq.to_u32().unwrap(), rs1, rs2)
+		self.b_type(Op::Branch, offset, BranchFunct3::GEq.to_raw(), rs1, rs2)
 	}
 	
 	pub fn bltu(&mut self, rs1: u32, rs2: u32, offset: i32) -> AsmResult {
-		self.b_type(Op::Branch, offset, BranchFunct3::LtU.to_u32().unwrap(), rs1, rs2)
+		self.b_type(Op::Branch, offset, BranchFunct3::LtU.to_raw(), rs1, rs2)
 	}
 	
 	pub fn bgeu(&mut self, rs1: u32, rs2: u32, offset: i32) -> AsmResult {
-		self.b_type(Op::Branch, offset, BranchFunct3::GEqU.to_u32().unwrap(), rs1, rs2)
+		self.b_type(Op::Branch, offset, BranchFunct3::GEqU.to_raw(), rs1, rs2)
 	}
 	
 	pub fn mul(&mut self, rd: u32, rs1: u32, rs2: u32) -> AsmResult {
@@ -321,7 +321,7 @@ impl AsmJit {
 	}
 	
 	pub fn csrrw(&mut self, rd: u32, csr: u32, rs1: u32) -> AsmResult {
-		self.i_type(Op::System, rd, SystemFunct3::CsrRW.to_u32().unwrap(), rs1, csr as i32)
+		self.i_type(Op::System, rd, SystemFunct3::CsrRW.to_raw(), rs1, csr as i32)
 	}
 	
 	pub fn rewrite_immediate(&mut self, asm_result: &AsmResult, immediate: i32) {
@@ -347,7 +347,7 @@ impl AsmJit {
 	}
 
 	fn r_type(&mut self, op: Op, rd: u32, funct3: u32, rs1: u32, rs2: u32, funct7: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(funct3, 3, 0, 12) | 
 			bitfield(rs1, 5, 0, 15) | 
@@ -360,7 +360,7 @@ impl AsmJit {
 	
 	#[allow(unused)]
 	fn r_type_at(&mut self, op: Op, rd: u32, funct3: u32, rs1: u32, rs2: u32, funct7: u32, address: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(funct3, 3, 0, 12) | 
 			bitfield(rs1, 5, 0, 15) | 
@@ -371,7 +371,7 @@ impl AsmJit {
 	}
 
 	fn i_type(&mut self, op: Op, rd: u32, funct3: u32, rs1: u32, imm: i32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(funct3, 3, 0, 12) | 
 			bitfield(rs1, 5, 0, 15) | 
@@ -382,7 +382,7 @@ impl AsmJit {
 	}
 	
 	fn i_type_at(&mut self, op: Op, rd: u32, funct3: u32, rs1: u32, imm: i32, address: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(funct3, 3, 0, 12) | 
 			bitfield(rs1, 5, 0, 15) | 
@@ -392,7 +392,7 @@ impl AsmJit {
 	}
 
 	fn s_type(&mut self, op: Op, funct3: u32, rs1: u32, rs2: u32, imm: i32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(imm as u32, 5, 0, 7) | 
 			bitfield(funct3, 3, 0, 12) | 
 			bitfield(rs1, 5, 0, 15) | 
@@ -404,7 +404,7 @@ impl AsmJit {
 	}
 	
 	fn s_type_at(&mut self, op: Op, funct3: u32, rs1: u32, rs2: u32, imm: i32, address: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(imm as u32, 5, 0, 7) | 
 			bitfield(funct3, 3, 0, 12) | 
 			bitfield(rs1, 5, 0, 15) | 
@@ -415,7 +415,7 @@ impl AsmJit {
 	}
 	
 	fn b_type(&mut self, op: Op, imm: i32, funct3: u32, rs1: u32, rs2: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(imm as u32, 1, 11, 7) |
 			bitfield(imm as u32, 4, 1, 8) |
 			bitfield(funct3, 3, 0, 12) | 
@@ -429,7 +429,7 @@ impl AsmJit {
 	}
 	
 	fn b_type_at(&mut self, op: Op, imm: i32, funct3: u32, rs1: u32, rs2: u32, address: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(imm as u32, 1, 11, 7) |
 			bitfield(imm as u32, 4, 1, 8) |
 			bitfield(funct3, 3, 0, 12) | 
@@ -442,7 +442,7 @@ impl AsmJit {
 	}
 
 	fn u_type(&mut self, op: Op, rd: u32, imm: i32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(imm as u32, 20, 0, 12);
 		let address = self.bytes.len() as u32 + self.start_address;
@@ -451,7 +451,7 @@ impl AsmJit {
 	}
 	
 	fn u_type_at(&mut self, op: Op, rd: u32, imm: i32, address: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(imm as u32, 20, 0, 12);
 		self.write_u32(opcode_value, address);
@@ -459,7 +459,7 @@ impl AsmJit {
 	}
 
 	fn j_type(&mut self, op: Op, rd: u32, imm: i32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(imm as u32, 10, 1, 21) |
 			bitfield(imm as u32, 1, 11, 20) |
@@ -471,7 +471,7 @@ impl AsmJit {
 	}
 	
 	fn j_type_at(&mut self, op: Op, rd: u32, imm: i32, address: u32) -> AsmResult {
-		let opcode_value = op.to_u32().unwrap() | 
+		let opcode_value = op.to_raw() | 
 			bitfield(rd, 5, 0, 7) | 
 			bitfield(imm as u32, 10, 1, 21) |
 			bitfield(imm as u32, 1, 11, 20) |

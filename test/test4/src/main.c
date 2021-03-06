@@ -21,6 +21,10 @@ void debug_print_msg(const char * message, uint32_t length) {
 	DEBUG_IO_WRITE = MESSAGE_IO_WRITE_TYPE_STRING;
 }
 
+void debug_print_string(const char * str) {
+	debug_print_msg(str, str_len(str));
+}
+
 void debug_print_u32(uint32_t value) {
 	DEBUG_IO_MSG_ADDRESS = value;
 	DEBUG_IO_WRITE = MESSAGE_IO_WRITE_TYPE_U32;
@@ -35,7 +39,16 @@ void wfi() {
 	__asm__ volatile("wfi");
 }
 
+void test_add(float a, float b) {
+	debug_print_string("adding: ");
+	debug_print_f32(a);
+	debug_print_f32(b);
+	debug_print_string("result: ");
+	float result = a + b;
+	debug_print_f32(result);
+}
+
 void main() {
-	debug_print_f32(0.5f);
+	test_add(0.5f, 1.0f);
 	wfi();
 }

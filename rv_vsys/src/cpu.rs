@@ -352,723 +352,757 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 		};
 		if cfg!(feature = "cpu_debug") { print!("step @{:#010x}: {:02x} {:02x} {:02x} {:02x}  | ", pc, opcode_value & 0xFF, (opcode_value >> 8) & 0xFF, (opcode_value >> 16) & 0xFF, opcode_value >> 24); }
 		let opcode = Opcode::new(opcode_value);
-		if let Some(op) = opcode.op() {
-			match op {
-				Op::Lui => {
-					let imm = opcode.u_imm() << 12;
-					let rd = opcode.rd();
-					self.set_gpr(rd, imm);
-					self.pc += 4;
-					if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("lui {}, {:#07x}", REG_NAMES[rd as usize], opcode.u_imm()), REG_NAMES[rd as usize], imm); }
-				},
-				Op::Auipc => {
-					let imm = opcode.u_imm() << 12;
-					let pc = self.pc;
-					let val = imm.wrapping_add(pc);
-					let rd = opcode.rd();
-					self.set_gpr(rd, val);
-					self.pc += 4;
-					if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("auipc {}, imm: {:#07x}", REG_NAMES[rd as usize], opcode.u_imm()), REG_NAMES[rd as usize], val); }
+		match opcode.op() {
+			Op::Lui => {
+				let imm = opcode.u_imm() << 12;
+				let rd = opcode.rd();
+				self.set_gpr(rd, imm);
+				self.pc += 4;
+				if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("lui {}, {:#07x}", REG_NAMES[rd as usize], opcode.u_imm()), REG_NAMES[rd as usize], imm); }
+			},
+			Op::Auipc => {
+				let imm = opcode.u_imm() << 12;
+				let pc = self.pc;
+				let val = imm.wrapping_add(pc);
+				let rd = opcode.rd();
+				self.set_gpr(rd, val);
+				self.pc += 4;
+				if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("auipc {}, imm: {:#07x}", REG_NAMES[rd as usize], opcode.u_imm()), REG_NAMES[rd as usize], val); }
+			}
+			Op::Jal => {
+				let imm = opcode.j_imm_signed();
+				let return_addr = self.pc + 4;
+				let rd = opcode.rd();
+				self.set_gpr(rd, return_addr);
+				self.pc = self.pc.wrapping_add(imm as u32);
+				if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     {: <12} <= {:#010x}", format!("jal {}, {:#010x}", REG_NAMES[rd as usize], self.pc), self.pc, REG_NAMES[rd as usize], return_addr); }
+			},
+			Op::Jalr => {
+				let imm = opcode.i_imm_signed();
+				let rs1 = opcode.rs1();
+				let rd = opcode.rd();
+				let base = self.get_gpr(rs1);
+				let return_addr = self.pc + 4;
+				self.set_gpr(rd, return_addr);
+				self.pc = base.wrapping_add(imm as u32);
+				if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     {: <12} <= {:#010x}", format!("jalr {}, {}({})", REG_NAMES[rd as usize], if imm == 0 {"".to_string()} else {format!("{:#03x}", imm).to_string()}, REG_NAMES[rs1 as usize]), self.pc, REG_NAMES[rd as usize], return_addr); }
+			},
+			Op::OpImm => {
+				let op_funct = opcode.funct3_op_imm();
+				match op_funct {
+					OpImmFunct3::AddI => {
+						let imm = opcode.i_imm_signed();
+						let rd = opcode.rd();
+						let rs1 = opcode.rs1();
+						let src_val = self.get_gpr(rs1) as i32;
+						let dst_val = src_val.wrapping_add(imm);
+						self.set_gpr(rd, dst_val as u32);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("addi {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val as u32); }
+					},
+					OpImmFunct3::SltI => {
+						let imm = opcode.i_imm_signed();
+						let rd = opcode.rd();
+						let rs1 = opcode.rs1();
+						let src_val = self.get_gpr(rs1) as i32;
+						let dst_val = if src_val < imm { 1 } else { 0 };
+						self.set_gpr(rd, dst_val as u32);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("slti {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
+					},
+					OpImmFunct3::SltIU => {
+						let imm = opcode.i_imm_signed() as u32;
+						let rd = opcode.rd();
+						let rs1 = opcode.rs1();
+						let src_val = self.get_gpr(rs1);
+						let dst_val = if src_val < imm { 1 } else { 0 };
+						self.set_gpr(rd, dst_val);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("sltiu {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
+					},
+					OpImmFunct3::XorI => {
+						let imm = opcode.i_imm_signed() as u32;
+						let rd = opcode.rd();
+						let rs1 = opcode.rs1();
+						let src_val = self.get_gpr(rs1);
+						let dst_val = src_val ^ imm;
+						self.set_gpr(rd, dst_val);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("xori {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
+					},
+					OpImmFunct3::OrI => {
+						let imm = opcode.i_imm_signed() as u32;
+						let rd = opcode.rd();
+						let rs1 = opcode.rs1();
+						let src_val = self.get_gpr(rs1);
+						let dst_val = src_val | imm;
+						self.set_gpr(rd, dst_val);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("ori {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
+					},
+					OpImmFunct3::AndI => {
+						let imm = opcode.i_imm_signed() as u32;
+						let rd = opcode.rd();
+						let rs1 = opcode.rs1();
+						let src_val = self.get_gpr(rs1);
+						let dst_val = src_val & imm;
+						self.set_gpr(rd, dst_val);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("andi {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
+					},
+					OpImmFunct3::SllI => {
+						let rd = opcode.rd();
+						let shift = opcode.shamt();
+						let rs1 = opcode.rs1();
+						let src_val = self.get_gpr(rs1);
+						let dst_val = src_val << shift;
+						self.set_gpr(rd, dst_val);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("slli {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], shift), REG_NAMES[rd as usize], dst_val); }
+					},
+					OpImmFunct3::SrxI => {
+						let rd = opcode.rd();
+						let shift = opcode.shamt();
+						let rs1 = opcode.rs1();
+						if opcode.srxi_is_arithmetic() {
+							let src_val = self.get_gpr(rs1);
+							let dst_val = src_val >> shift;
+							self.set_gpr(rd, dst_val);
+							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("srli {}, {}, {:#03x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], shift), REG_NAMES[rd as usize], dst_val); }
+						} else {
+							let src_val = self.get_gpr(rs1) as i32;
+							let dst_val = src_val >> shift;
+							self.set_gpr(rd, dst_val as u32);
+							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("srai {}, {}, {:#03x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], shift), REG_NAMES[rd as usize], dst_val); }
+						}
+					},
 				}
-				Op::Jal => {
-					let imm = opcode.j_imm_signed();
-					let return_addr = self.pc + 4;
-					let rd = opcode.rd();
-					self.set_gpr(rd, return_addr);
-					self.pc = self.pc.wrapping_add(imm as u32);
-					if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     {: <12} <= {:#010x}", format!("jal {}, {:#010x}", REG_NAMES[rd as usize], self.pc), self.pc, REG_NAMES[rd as usize], return_addr); }
-				},
-				Op::Jalr => {
-					let imm = opcode.i_imm_signed();
-					let rs1 = opcode.rs1();
-					let rd = opcode.rd();
-					let base = self.get_gpr(rs1);
-					let return_addr = self.pc + 4;
-					self.set_gpr(rd, return_addr);
-					self.pc = base.wrapping_add(imm as u32);
-					if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     {: <12} <= {:#010x}", format!("jalr {}, {}({})", REG_NAMES[rd as usize], if imm == 0 {"".to_string()} else {format!("{:#03x}", imm).to_string()}, REG_NAMES[rs1 as usize]), self.pc, REG_NAMES[rd as usize], return_addr); }
-				},
-				Op::OpImm => {
-					let op_funct = opcode.funct3_op_imm();
-					match op_funct {
-						OpImmFunct3::AddI => {
-							let imm = opcode.i_imm_signed();
-							let rd = opcode.rd();
-							let rs1 = opcode.rs1();
-							let src_val = self.get_gpr(rs1) as i32;
-							let dst_val = src_val.wrapping_add(imm);
-							self.set_gpr(rd, dst_val as u32);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("addi {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val as u32); }
-						},
-						OpImmFunct3::SltI => {
-							let imm = opcode.i_imm_signed();
-							let rd = opcode.rd();
-							let rs1 = opcode.rs1();
-							let src_val = self.get_gpr(rs1) as i32;
-							let dst_val = if src_val < imm { 1 } else { 0 };
-							self.set_gpr(rd, dst_val as u32);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("slti {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
-						},
-						OpImmFunct3::SltIU => {
-							let imm = opcode.i_imm_signed() as u32;
-							let rd = opcode.rd();
-							let rs1 = opcode.rs1();
-							let src_val = self.get_gpr(rs1);
-							let dst_val = if src_val < imm { 1 } else { 0 };
-							self.set_gpr(rd, dst_val);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("sltiu {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
-						},
-						OpImmFunct3::XorI => {
-							let imm = opcode.i_imm_signed() as u32;
-							let rd = opcode.rd();
-							let rs1 = opcode.rs1();
-							let src_val = self.get_gpr(rs1);
-							let dst_val = src_val ^ imm;
-							self.set_gpr(rd, dst_val);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("xori {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
-						},
-						OpImmFunct3::OrI => {
-							let imm = opcode.i_imm_signed() as u32;
-							let rd = opcode.rd();
-							let rs1 = opcode.rs1();
-							let src_val = self.get_gpr(rs1);
-							let dst_val = src_val | imm;
-							self.set_gpr(rd, dst_val);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("ori {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
-						},
-						OpImmFunct3::AndI => {
-							let imm = opcode.i_imm_signed() as u32;
-							let rd = opcode.rd();
-							let rs1 = opcode.rs1();
-							let src_val = self.get_gpr(rs1);
-							let dst_val = src_val & imm;
-							self.set_gpr(rd, dst_val);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("andi {}, {}, {:#010x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], imm), REG_NAMES[rd as usize], dst_val); }
-						},
-						OpImmFunct3::SllI => {
-							let rd = opcode.rd();
-							let shift = opcode.shamt();
-							let rs1 = opcode.rs1();
-							let src_val = self.get_gpr(rs1);
-							let dst_val = src_val << shift;
-							self.set_gpr(rd, dst_val);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("slli {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], shift), REG_NAMES[rd as usize], dst_val); }
-						},
-						OpImmFunct3::SrxI => {
-							let rd = opcode.rd();
-							let shift = opcode.shamt();
-							let rs1 = opcode.rs1();
-							if opcode.srxi_is_arithmetic() {
-								let src_val = self.get_gpr(rs1);
-								let dst_val = src_val >> shift;
-								self.set_gpr(rd, dst_val);
-								if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("srli {}, {}, {:#03x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], shift), REG_NAMES[rd as usize], dst_val); }
-							} else {
-								let src_val = self.get_gpr(rs1) as i32;
-								let dst_val = src_val >> shift;
-								self.set_gpr(rd, dst_val as u32);
-								if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= {}      .", format!("srai {}, {}, {:#03x}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], shift), REG_NAMES[rd as usize], dst_val); }
+				self.pc += 4;
+			},
+			Op::Store => {
+				let store_type = opcode.funct3_store();
+				let src = opcode.rs2();
+				let base = opcode.rs1();
+				let offset = opcode.s_imm_signed();
+				let address = self.get_gpr(base).wrapping_add(offset as u32);
+				let value = self.get_gpr(src);
+				match store_type {
+					StoreFunct3::Byte => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # ({:#010x}) <= {:#04x}        .", format!("sb {}({}), {}", if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize], REG_NAMES[src as usize]), address, value as u8); }
+						match self.mio.write_8(address, value as u8) {
+							MemWriteResult::Ok => {
+							},
+							MemWriteResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::StoreAddressMisaligned{
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
+							},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault{
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
 							}
 						}
+					},
+					StoreFunct3::Half => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # ({:#010x}) <= {:#06x}        .", format!("sh {}({}), {}", if offset != 0 { format!("{}", offset as i32).to_string() } else { "".to_string() }, REG_NAMES[base as usize], REG_NAMES[src as usize]), address, value as u16); }
+						match self.mio.write_16(address, value as u16) {
+							MemWriteResult::Ok => {
+							},
+							MemWriteResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::StoreAddressMisaligned{
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
+							},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
+							}
+						}
+					},
+					StoreFunct3::Word => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # ({:#010x}) <=  {:#010x}     .", format!("sw {}({}), {}", if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize], REG_NAMES[src as usize]), address, value); }
+						match self.mio.write_32(address, value) {
+							MemWriteResult::Ok => {
+							},
+							MemWriteResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::StoreAddressMisaligned {
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
+							},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
+							}
+						}
+					},
+					StoreFunct3::Unknown => {
+						return self.illegal_instruction(opcode);
 					}
-					self.pc += 4;
-				},
-				Op::Store => {
-					let store_type = opcode.funct3_store();
-					let src = opcode.rs2();
-					let base = opcode.rs1();
-					let offset = opcode.s_imm_signed();
-					let address = self.get_gpr(base).wrapping_add(offset as u32);
-					let value = self.get_gpr(src);
-					match store_type {
-						StoreFunct3::Byte => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # ({:#010x}) <= {:#04x}        .", format!("sb {}({}), {}", if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize], REG_NAMES[src as usize]), address, value as u8); }
-							match self.mio.write_8(address, value as u8) {
-								MemWriteResult::Ok => {
-								},
-								MemWriteResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::StoreAddressMisaligned{
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								},
-								_ => {
-									self.pending_exception = Some(Exception::StoreAccessFault{
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								}
+				}
+				self.pc += 4;
+			},
+			Op::Load => {
+				let load_type = opcode.funct3_load();
+				let dest = opcode.rd();
+				let base = opcode.rs1();
+				let offset = opcode.i_imm_signed();
+				let address = self.get_gpr(base).wrapping_add(offset as u32);
+				match load_type {
+					LoadFunct3::Byte => {
+						let load_result = self.mio.read_8(address);
+						match load_result {
+							MemReadResult::Ok(value) => {
+								self.set_gpr(dest, ((value as i8) as i32) as u32);
+								if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("lb {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value as i8 as i32); }
+							},
+							MemReadResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::LoadAddressMisaligned{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
 							}
-						},
-						StoreFunct3::Half => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # ({:#010x}) <= {:#06x}        .", format!("sh {}({}), {}", if offset != 0 { format!("{}", offset as i32).to_string() } else { "".to_string() }, REG_NAMES[base as usize], REG_NAMES[src as usize]), address, value as u16); }
-							match self.mio.write_16(address, value as u16) {
-								MemWriteResult::Ok => {
-								},
-								MemWriteResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::StoreAddressMisaligned{
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								},
-								_ => {
-									self.pending_exception = Some(Exception::StoreAccessFault {
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								}
+							_ => {
+								self.pending_exception = Some(Exception::LoadAccessFault{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
 							}
-						},
-						StoreFunct3::Word => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # ({:#010x}) <=  {:#010x}     .", format!("sw {}({}), {}", if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize], REG_NAMES[src as usize]), address, value); }
-							match self.mio.write_32(address, value) {
-								MemWriteResult::Ok => {
-								},
-								MemWriteResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::StoreAddressMisaligned {
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								},
-								_ => {
-									self.pending_exception = Some(Exception::StoreAccessFault {
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								}
+						}
+					},
+					LoadFunct3::Half => {
+						let load_result = self.mio.read_16(address);
+						match load_result {
+							MemReadResult::Ok(value) => {
+								self.set_gpr(dest, ((value as i16) as i32) as u32);
+								if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lh {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value as i16 as i32); }
+							},
+							MemReadResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::LoadAddressMisaligned{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
 							}
-						},
+							_ => {
+								self.pending_exception = Some(Exception::LoadAccessFault{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							}
+						}
+					},
+					LoadFunct3::Word => {
+						let load_result = self.mio.read_32(address);
+						match load_result {
+							MemReadResult::Ok(value) => {
+								self.set_gpr(dest, value as u32);
+								if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lw {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value as i32); }
+							},
+							MemReadResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::LoadAddressMisaligned{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							}
+							_ => {
+								self.pending_exception = Some(Exception::LoadAccessFault{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							}
+						}
+					},
+					LoadFunct3::ByteUnsigned => {
+						let load_result = self.mio.read_8(address);
+						match load_result {
+							MemReadResult::Ok(value) => {
+								self.set_gpr(dest, value as u32);
+								if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lbu {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value); }
+							},
+							MemReadResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::LoadAddressMisaligned{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							}
+							_ => {
+								self.pending_exception = Some(Exception::LoadAccessFault{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							}
+						}
+					},
+					LoadFunct3::HalfUnsigned => {
+						let load_result = self.mio.read_16(address);
+						match load_result {
+							MemReadResult::Ok(value) => {
+								self.set_gpr(dest, value as u32);
+								if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lhu {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value); }
+							},
+							MemReadResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::LoadAddressMisaligned{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							}
+							_ => {
+								self.pending_exception = Some(Exception::LoadAccessFault{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							}
+						}
+					},
+					LoadFunct3::Unknown => {
+						return self.illegal_instruction(opcode);
+					},
+				}
+				self.pc += 4;
+			},
+			Op::Op => {
+				let rd: u32 = opcode.rd();
+				let rs1: u32 = opcode.rs1();
+				let rs2: u32 = opcode.rs2();
+				let s1_value: u32 = self.get_gpr(rs1);
+				let s2_value: u32 = self.get_gpr(rs2);
+				let op_funct = opcode.funct3funct7_op();
+				let value = match op_funct {
+					OpFunct3Funct7::Add => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("add {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value.wrapping_add(s2_value)); }
+						s1_value.wrapping_add(s2_value)
+					},
+					OpFunct3Funct7::Sub => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sub {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value.wrapping_sub(s2_value)); }
+						s1_value.wrapping_sub(s2_value)
 					}
+					OpFunct3Funct7::Sll => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sll {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value << (s2_value & 0x1F)); }
+						s1_value << (s2_value & 0x1F)
+					},
+					OpFunct3Funct7::Slt => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("slt {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], if (s1_value as i32) < (s2_value as i32) { 1 } else { 0 }); }
+						if (s1_value as i32) < (s2_value as i32) { 1 } else { 0 }
+					},
+					OpFunct3Funct7::SltU => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sltu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], if s1_value < s2_value { 1 } else { 0 }); }
+						if s1_value < s2_value { 1 } else { 0 }
+					},
+					OpFunct3Funct7::Xor => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("xor {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value ^ s2_value); }
+						s1_value ^ s2_value
+					},
+					OpFunct3Funct7::Sra => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sra {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (s1_value as i32 >> (s2_value & 0x1F)) as u32); }
+						(s1_value as i32 >> (s2_value & 0x1F)) as u32
+					},
+					OpFunct3Funct7::Srl => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("srl {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value >> (s2_value & 0x1F)); }
+						s1_value >> (s2_value & 0x1F)
+					},
+					OpFunct3Funct7::Or => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("or {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value | s2_value); }
+						s1_value | s2_value
+					},
+					OpFunct3Funct7::And => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("and {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value & s2_value); }
+						s1_value & s2_value
+					},
+					OpFunct3Funct7::Mul => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mul {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value * s2_value); }
+						s1_value * s2_value
+					},
+					OpFunct3Funct7::MulH => {
+						let mult = ((s1_value as i32) as i64) * ((s2_value as i32) as i64);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mulh {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (mult >> 32) as u32); }
+						(mult >> 32) as u32
+					},
+					OpFunct3Funct7::MulHSU => {
+						let mult = (s1_value as u64) as i64 * (s2_value as i64);
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mulhsu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (mult >> 32) as u32); }
+						(mult >> 32) as u32
+					},
+					OpFunct3Funct7::MulHU => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mulhu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (((s1_value as u64) * (s2_value as u64)) >> 32) as u32); }
+						(((s1_value as u64) * (s2_value as u64)) >> 32) as u32
+					},
+					OpFunct3Funct7::Div => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("div {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], ((s1_value as i32) / (s2_value as i32)) as u32); }
+						((s1_value as i32) / (s2_value as i32)) as u32
+					},
+					OpFunct3Funct7::DivU => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("divu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value / s2_value); }
+						s1_value / s2_value
+					},
+					OpFunct3Funct7::Rem => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("rem {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], ((s1_value as i32) % (s2_value as i32)) as u32); }
+						((s1_value as i32) % (s2_value as i32)) as u32
+					},
+					OpFunct3Funct7::RemU => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("remu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value % s2_value); }
+						s1_value % s2_value
+					},
+					OpFunct3Funct7::Unknown => {
+						return self.illegal_instruction(opcode);
+					},
+				};
+				self.set_gpr(rd, value);
+				self.pc += 4;
+			},
+			Op::Branch => {
+				let branch_type = opcode.funct3_branch();
+				let rs1 = opcode.rs1();
+				let rs2 = opcode.rs2();
+				let s1_value = self.get_gpr(rs1);
+				let s2_value = self.get_gpr(rs2);
+				let offset = opcode.b_imm_signed();
+				let branch_addr = self.pc.wrapping_add(offset as u32);
+				if match branch_type {
+					BranchFunct3::Eq => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("beq {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value == s2_value {branch_addr} else {self.pc + 4}); }
+						s1_value == s2_value
+					},
+					BranchFunct3::NEq => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bne {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value != s2_value {branch_addr} else {self.pc + 4}); }
+						s1_value != s2_value
+					},
+					BranchFunct3::Lt => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("blt {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if (s1_value as i32) < (s2_value as i32) {branch_addr} else {self.pc + 4}); }
+						(s1_value as i32) < (s2_value as i32)
+					},
+					BranchFunct3::GEq => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bge {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if (s1_value as i32) >= (s2_value as i32) {branch_addr} else {self.pc + 4}); }
+						(s1_value as i32) >= (s2_value as i32)
+					},
+					BranchFunct3::LtU => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bltu {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value < s2_value {branch_addr} else {self.pc + 4}); }
+						s1_value < s2_value
+					},
+					BranchFunct3::GEqU => {
+						if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bgeu {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value >= s2_value {branch_addr} else {self.pc + 4}); }
+						s1_value >= s2_value
+					},
+					BranchFunct3::Unknown => {
+						return self.illegal_instruction(opcode);
+					},
+				} {
+					self.pc = self.pc.wrapping_add(offset as u32);
+				} else {
 					self.pc += 4;
-				},
-				Op::Load => {
-					let load_type = opcode.funct3_load();
-					let dest = opcode.rd();
-					let base = opcode.rs1();
-					let offset = opcode.i_imm_signed();
-					let address = self.get_gpr(base).wrapping_add(offset as u32);
-					match load_type {
-						LoadFunct3::Byte => {
-							let load_result = self.mio.read_8(address);
-							match load_result {
-								MemReadResult::Ok(value) => {
-									self.set_gpr(dest, ((value as i8) as i32) as u32);
-									if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("lb {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value as i8 as i32); }
-								},
-								MemReadResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::LoadAddressMisaligned{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-								_ => {
-									self.pending_exception = Some(Exception::LoadAccessFault{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
+				}
+			},
+			Op::LoadFp => {
+				let rd = opcode.rd();
+				let rbase = opcode.rs1();
+				let offset = opcode.i_imm_signed();
+				let address = self.get_gpr(rbase).wrapping_add(offset as u32);
+				let width = opcode.funct3_loadfp();
+				match width {
+					LoadFpFunct3::Width32 => {
+						let value = match self.mio.read_32(address) {
+							MemReadResult::Ok(value) => {
+								f32::from_bits(value)
+							},
+							MemReadResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::LoadAddressMisaligned{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
+							},
+							_ => {
+								self.pending_exception = Some(Exception::LoadAccessFault{
+									instr_addr: self.pc,
+									load_addr: address
+								});
+								return false;
 							}
-						},
-						LoadFunct3::Half => {
-							let load_result = self.mio.read_16(address);
-							match load_result {
-								MemReadResult::Ok(value) => {
-									self.set_gpr(dest, ((value as i16) as i32) as u32);
-									if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lh {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value as i16 as i32); }
-								},
-								MemReadResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::LoadAddressMisaligned{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-								_ => {
-									self.pending_exception = Some(Exception::LoadAccessFault{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
+						};
+						self.set_fpr(rd, value);
+					},
+					LoadFpFunct3::Unknown => {
+						return self.illegal_instruction(opcode);
+					},
+				}
+				self.pc += 4;
+			},
+			Op::StoreFp => {
+				let rs = opcode.rs2();
+				let rbase = opcode.rs1();
+				let offset = opcode.s_imm_signed();
+				let address = self.get_gpr(rbase).wrapping_add(offset as u32);
+				let width = opcode.funct3_storefp();
+				match width {
+					StoreFpFunct3::Width32 => {
+						let value = self.get_fpr(rs);
+						let value_raw = f32::to_bits(value);
+						match self.mio.write_32(address, value_raw) {
+							MemWriteResult::Ok => {},
+							MemWriteResult::ErrAlignment => {
+								self.pending_exception = Some(Exception::StoreAddressMisaligned{
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
+							},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault{
+									instr_addr: self.pc,
+									store_addr: address
+								});
+								return false;
 							}
-						},
-						LoadFunct3::Word => {
-							let load_result = self.mio.read_32(address);
-							match load_result {
-								MemReadResult::Ok(value) => {
-									self.set_gpr(dest, value as u32);
-									if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lw {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value as i32); }
-								},
-								MemReadResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::LoadAddressMisaligned{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-								_ => {
-									self.pending_exception = Some(Exception::LoadAccessFault{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-							}
-						},
-						LoadFunct3::ByteUnsigned => {
-							let load_result = self.mio.read_8(address);
-							match load_result {
-								MemReadResult::Ok(value) => {
-									self.set_gpr(dest, value as u32);
-									if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lbu {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value); }
-								},
-								MemReadResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::LoadAddressMisaligned{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-								_ => {
-									self.pending_exception = Some(Exception::LoadAccessFault{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-							}
-						},
-						LoadFunct3::HalfUnsigned => {
-							let load_result = self.mio.read_16(address);
-							match load_result {
-								MemReadResult::Ok(value) => {
-									self.set_gpr(dest, value as u32);
-									if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <= ({:#010x})    .", format!("lhu {}, {}({})", REG_NAMES[dest as usize], if offset != 0 { format!("{}", offset).to_string() } else { "".to_string() }, REG_NAMES[base as usize]), REG_NAMES[dest as usize], value); }
-								},
-								MemReadResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::LoadAddressMisaligned{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-								_ => {
-									self.pending_exception = Some(Exception::LoadAccessFault{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-							}
-						},
-					}
-					self.pc += 4;
-				},
-				Op::Op => {
-					let rd: u32 = opcode.rd();
-					let rs1: u32 = opcode.rs1();
-					let rs2: u32 = opcode.rs2();
-					let s1_value: u32 = self.get_gpr(rs1);
-					let s2_value: u32 = self.get_gpr(rs2);
-					let op_funct = opcode.funct3funct7_op();
-					let value = match op_funct {
-						OpFunct3Funct7::Add => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("add {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value.wrapping_add(s2_value)); }
-							s1_value.wrapping_add(s2_value)
-						},
-						OpFunct3Funct7::Sub => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sub {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value.wrapping_sub(s2_value)); }
-							s1_value.wrapping_sub(s2_value)
 						}
-						OpFunct3Funct7::Sll => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sll {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value << (s2_value & 0x1F)); }
-							s1_value << (s2_value & 0x1F)
-						},
-						OpFunct3Funct7::Slt => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("slt {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], if (s1_value as i32) < (s2_value as i32) { 1 } else { 0 }); }
-							if (s1_value as i32) < (s2_value as i32) { 1 } else { 0 }
-						},
-						OpFunct3Funct7::SltU => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sltu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], if s1_value < s2_value { 1 } else { 0 }); }
-							if s1_value < s2_value { 1 } else { 0 }
-						},
-						OpFunct3Funct7::Xor => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("xor {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value ^ s2_value); }
-							s1_value ^ s2_value
-						},
-						OpFunct3Funct7::Sra => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("sra {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (s1_value as i32 >> (s2_value & 0x1F)) as u32); }
-							(s1_value as i32 >> (s2_value & 0x1F)) as u32
-						},
-						OpFunct3Funct7::Srl => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("srl {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value >> (s2_value & 0x1F)); }
-							s1_value >> (s2_value & 0x1F)
-						},
-						OpFunct3Funct7::Or => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("or {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value | s2_value); }
-							s1_value | s2_value
-						},
-						OpFunct3Funct7::And => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("and {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value & s2_value); }
-							s1_value & s2_value
-						},
-						OpFunct3Funct7::Mul => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mul {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value * s2_value); }
-							s1_value * s2_value
-						},
-						OpFunct3Funct7::MulH => {
-							let mult = ((s1_value as i32) as i64) * ((s2_value as i32) as i64);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mulh {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (mult >> 32) as u32); }
-							(mult >> 32) as u32
-						},
-						OpFunct3Funct7::MulHSU => {
-							let mult = (s1_value as u64) as i64 * (s2_value as i64);
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mulhsu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (mult >> 32) as u32); }
-							(mult >> 32) as u32
-						},
-						OpFunct3Funct7::MulHU => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("mulhu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], (((s1_value as u64) * (s2_value as u64)) >> 32) as u32); }
-							(((s1_value as u64) * (s2_value as u64)) >> 32) as u32
-						},
-						OpFunct3Funct7::Div => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("div {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], ((s1_value as i32) / (s2_value as i32)) as u32); }
-							((s1_value as i32) / (s2_value as i32)) as u32
-						},
-						OpFunct3Funct7::DivU => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("divu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value / s2_value); }
-							s1_value / s2_value
-						},
-						OpFunct3Funct7::Rem => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("rem {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], ((s1_value as i32) % (s2_value as i32)) as u32); }
-							((s1_value as i32) % (s2_value as i32)) as u32
-						},
-						OpFunct3Funct7::RemU => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # {: <12} <=  {:#010x}     .", format!("remu {}, {}, {}", REG_NAMES[rd as usize], REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize]), REG_NAMES[rd as usize], s1_value % s2_value); }
-							s1_value % s2_value
+					},
+					StoreFpFunct3::Unknown => {
+						return self.illegal_instruction(opcode);
+					},
+				}
+				self.pc += 4;
+			},
+			Op::System => {
+				let funct = opcode.funct3_system();
+				let rd: u32 = opcode.rd();
+				let rs1: u32 = opcode.rs1();
+				let csr = opcode.i_imm();
+				match funct {
+					SystemFunct3::Int => {
+						let ifunct = opcode.funct7_system_int();
+						match ifunct {
+							SystemIntFunct7::WaitForInterrupt => {
+								if cfg!(feature = "cpu_debug") { println!("{: <50} # .                               .", format!("wfi")); }
+								self.pc += 4;
+								self.waiting_for_interrupt = true;
+								return false;
+							},
+							SystemIntFunct7::MRet => {
+								self.pc = self.trap_csrs.mepc;
+								self.trap_csrs.mstatus &= !MSTATUS_MIE;
+								self.trap_csrs.mstatus |= if self.trap_csrs.mstatus & MSTATUS_MPIE != 0 {
+									MSTATUS_MIE
+								} else {
+									0
+								};
+								if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     mstatus      <=  {:032b}", format!("mret"), self.pc, self.trap_csrs.mstatus); }
+							},
+							SystemIntFunct7::Unknown => {
+								return self.illegal_instruction(opcode);
+							},
 						}
-					};
-					self.set_gpr(rd, value);
-					self.pc += 4;
-				},
-				Op::Branch => {
-					let branch_type = opcode.funct3_branch();
-					let rs1 = opcode.rs1();
-					let rs2 = opcode.rs2();
-					let s1_value = self.get_gpr(rs1);
-					let s2_value = self.get_gpr(rs2);
-					let offset = opcode.b_imm_signed();
-					let branch_addr = self.pc.wrapping_add(offset as u32);
-					if match branch_type {
-						BranchFunct3::Eq => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("beq {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value == s2_value {branch_addr} else {self.pc + 4}); }
-							s1_value == s2_value
-						},
-						BranchFunct3::NEq => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bne {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value != s2_value {branch_addr} else {self.pc + 4}); }
-							s1_value != s2_value
-						},
-						BranchFunct3::Lt => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("blt {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if (s1_value as i32) < (s2_value as i32) {branch_addr} else {self.pc + 4}); }
-							(s1_value as i32) < (s2_value as i32)
-						},
-						BranchFunct3::GEq => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bge {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if (s1_value as i32) >= (s2_value as i32) {branch_addr} else {self.pc + 4}); }
-							(s1_value as i32) >= (s2_value as i32)
-						},
-						BranchFunct3::LtU => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bltu {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value < s2_value {branch_addr} else {self.pc + 4}); }
-							s1_value < s2_value
-						},
-						BranchFunct3::GEqU => {
-							if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     .", format!("bgeu {}, {}, {:#010x}", REG_NAMES[rs1 as usize], REG_NAMES[rs2 as usize], branch_addr), if s1_value >= s2_value {branch_addr} else {self.pc + 4}); }
-							s1_value >= s2_value
-						}
-					} {
-						self.pc = self.pc.wrapping_add(offset as u32);
-					} else {
+					},
+					SystemFunct3::CsrRW => {
+						if cfg!(feature = "cpu_debug") { println!("csrrw"); }
+						let csr_value = if rd != 0 {
+							let csr_value = self.read_csr(csr);
+							self.set_gpr(rd, csr_value);
+							csr_value
+						} else {0};
+						let rs1_value = self.get_gpr(rs1);
 						self.pc += 4;
-					}
-				},
-				Op::LoadFp => {
-					let rd = opcode.rd();
-					let rbase = opcode.rs1();
-					let offset = opcode.i_imm_signed();
-					let address = self.get_gpr(rbase).wrapping_add(offset as u32);
-					let width = opcode.funct3_loadfp();
-					match width {
-						LoadFpFunct3::Width32 => {
-							let value = match self.mio.read_32(address) {
-								MemReadResult::Ok(value) => {
-									f32::from_bits(value)
-								},
-								MemReadResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::LoadAddressMisaligned{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								},
-								_ => {
-									self.pending_exception = Some(Exception::LoadAccessFault{
-										instr_addr: self.pc,
-										load_addr: address
-									});
-									return false;
-								}
-							};
-							self.set_fpr(rd, value);
-						}
-					}
-					self.pc += 4;
-				},
-				Op::StoreFp => {
-					let rs = opcode.rs2();
-					let rbase = opcode.rs1();
-					let offset = opcode.s_imm_signed();
-					let address = self.get_gpr(rbase).wrapping_add(offset as u32);
-					let width = opcode.funct3_storefp();
-					match width {
-						StoreFpFunct3::Width32 => {
-							let value = self.get_fpr(rs);
-							let value_raw = f32::to_bits(value);
-							match self.mio.write_32(address, value_raw) {
-								MemWriteResult::Ok => {},
-								MemWriteResult::ErrAlignment => {
-									self.pending_exception = Some(Exception::StoreAddressMisaligned{
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								},
-								_ => {
-									self.pending_exception = Some(Exception::StoreAccessFault{
-										instr_addr: self.pc,
-										store_addr: address
-									});
-									return false;
-								}
+						if cfg!(feature = "cpu_debug") { 
+							if rd == 0 {
+								println!("{: <50} # CSR {:#05x}   <=  {:#010x} .", format!("csrrw {}, {:#05x}, {}", REG_NAMES[rd as usize], csr, REG_NAMES[rs1 as usize]), csr, rs1_value);
+							} else {
+								println!("{: <50} # {}           <=  {:#010x} . CSR {:#05x}   <=  {:010x} ", format!("csrrw {}, {:#05x}, {}", REG_NAMES[rd as usize], csr, REG_NAMES[rs1 as usize]), REG_NAMES[rd as usize], csr_value, csr, rs1_value);
 							}
 						}
-					}
-					self.pc += 4;
-				},
-				Op::System => {
-					let funct = opcode.funct3_system();
-					let rd: u32 = opcode.rd();
-					let rs1: u32 = opcode.rs1();
-					let csr = opcode.i_imm();
-					match funct {
-						SystemFunct3::Int => {
-							let ifunct = opcode.funct7_system_int();
-							match ifunct {
-								SystemIntFunct7::WaitForInterrupt => {
-									if cfg!(feature = "cpu_debug") { println!("{: <50} # .                               .", format!("wfi")); }
-									self.pc += 4;
-									self.waiting_for_interrupt = true;
-									return false;
-								},
-								SystemIntFunct7::MRet => {
-									self.pc = self.trap_csrs.mepc;
-									self.trap_csrs.mstatus &= !MSTATUS_MIE;
-									self.trap_csrs.mstatus |= if self.trap_csrs.mstatus & MSTATUS_MPIE != 0 {
-										MSTATUS_MIE
-									} else {
-										0
-									};
-									if cfg!(feature = "cpu_debug") { println!("{: <50} # pc           <=  {:#010x}     mstatus      <=  {:032b}", format!("mret"), self.pc, self.trap_csrs.mstatus); }
-								}
-							}
-						},
-						SystemFunct3::CsrRW => {
-							if cfg!(feature = "cpu_debug") { println!("csrrw"); }
-							let csr_value = if rd != 0 {
-								let csr_value = self.read_csr(csr);
-								self.set_gpr(rd, csr_value);
-								csr_value
-							} else {0};
+						return self.write_csr(csr, rs1_value);
+					},
+					SystemFunct3::CsrRS => {
+						if cfg!(feature = "cpu_debug") { println!("csrrs"); }
+						let csr_value_old = self.read_csr(csr);
+						self.set_gpr(rd, csr_value_old);
+						self.pc += 4;
+						if rs1 != 0 {
 							let rs1_value = self.get_gpr(rs1);
-							self.pc += 4;
-							if cfg!(feature = "cpu_debug") { 
-								if rd == 0 {
-									println!("{: <50} # CSR {:#05x}   <=  {:#010x} .", format!("csrrw {}, {:#05x}, {}", REG_NAMES[rd as usize], csr, REG_NAMES[rs1 as usize]), csr, rs1_value);
-								} else {
-									println!("{: <50} # {}           <=  {:#010x} . CSR {:#05x}   <=  {:010x} ", format!("csrrw {}, {:#05x}, {}", REG_NAMES[rd as usize], csr, REG_NAMES[rs1 as usize]), REG_NAMES[rd as usize], csr_value, csr, rs1_value);
-								}
-							}
-							return self.write_csr(csr, rs1_value);
-							
-						},
-						SystemFunct3::CsrRS => {
-							if cfg!(feature = "cpu_debug") { println!("csrrs"); }
+							let updated_value = csr_value_old | rs1_value;
+							return self.write_csr(csr, updated_value);
+						}
+					},
+					SystemFunct3::CsrRC => {
+						if cfg!(feature = "cpu_debug") { println!("csrrc"); }
+						let csr_value_old = self.read_csr(csr);
+						self.set_gpr(rd, csr_value_old);
+						self.pc += 4;
+						if rs1 != 0 {
+							let rs1_value = self.get_gpr(rs1);
+							let updated_value = csr_value_old & !rs1_value;
+							return self.write_csr(csr, updated_value);
+						}
+					},
+					SystemFunct3::CsrRWI => {
+						let csr_value = if rd != 0 {
 							let csr_value_old = self.read_csr(csr);
 							self.set_gpr(rd, csr_value_old);
-							self.pc += 4;
-							if rs1 != 0 {
-								let rs1_value = self.get_gpr(rs1);
-								let updated_value = csr_value_old | rs1_value;
-								return self.write_csr(csr, updated_value);
-							}
-						},
-						SystemFunct3::CsrRC => {
-							if cfg!(feature = "cpu_debug") { println!("csrrc"); }
-							let csr_value_old = self.read_csr(csr);
-							self.set_gpr(rd, csr_value_old);
-							self.pc += 4;
-							if rs1 != 0 {
-								let rs1_value = self.get_gpr(rs1);
-								let updated_value = csr_value_old & !rs1_value;
-								return self.write_csr(csr, updated_value);
-							}
-						},
-						SystemFunct3::CsrRWI => {
-							let csr_value = if rd != 0 {
-								let csr_value_old = self.read_csr(csr);
-								self.set_gpr(rd, csr_value_old);
-								csr_value_old
-							} else { 0 };
-							self.pc += 4;
-							let csr_value_new = if (rs1 & 0x10) != 0 {
-								rs1 & 0xFFFFFFF0
+							csr_value_old
+						} else { 0 };
+						self.pc += 4;
+						let csr_value_new = if (rs1 & 0x10) != 0 {
+							rs1 & 0xFFFFFFF0
+						} else {
+							rs1
+						};
+						if cfg!(feature = "cpu_debug") { 
+							if rd == 0 {
+								println!("{: <50} # CSR {:#05x}    <=  {:010x}     .", format!("csrrwi {}, {:#05x}, {:#010x}", REG_NAMES[rd as usize], csr, csr_value_new), csr, csr_value_new);
 							} else {
-								rs1
-							};
-							if cfg!(feature = "cpu_debug") { 
-								if rd == 0 {
-									println!("{: <50} # CSR {:#05x}    <=  {:010x}     .", format!("csrrwi {}, {:#05x}, {:#010x}", REG_NAMES[rd as usize], csr, csr_value_new), csr, csr_value_new);
-								} else {
-									println!("{: <50} # {}            <=  {:010x}     CSR {:#05x}    <=  {:010x}     ", format!("csrrwi {}, {:#05x}, {}", REG_NAMES[rd as usize], csr, csr_value_new), REG_NAMES[rd as usize], csr_value, csr, csr_value_new);
-								}
+								println!("{: <50} # {}            <=  {:010x}     CSR {:#05x}    <=  {:010x}     ", format!("csrrwi {}, {:#05x}, {}", REG_NAMES[rd as usize], csr, csr_value_new), REG_NAMES[rd as usize], csr_value, csr, csr_value_new);
 							}
-							return self.write_csr(csr, csr_value_new);
-						},
-						SystemFunct3::CsrRSI => {
-							if cfg!(feature = "cpu_debug") { println!("csrrsi"); }
-							let csr_value_old = self.read_csr(csr);
-							let csr_bits_new = if (rs1 & 0x10) != 0 {
-								rs1 & 0xFFFFFFF0
-							} else {
-								rs1
-							};
-							self.pc += 4;
-							let csr_value_new = csr_value_old | csr_bits_new;
-							return self.write_csr(csr, csr_value_new);
-						},
-						SystemFunct3::CsrRCI => {
-							if cfg!(feature = "cpu_debug") { println!("csrrci"); }
-							let csr_value_old = self.read_csr(csr);
-							let csr_bits_new = if (rs1 & 0x10) != 0 {
-								rs1 & 0xFFFFFFF0
-							} else {
-								rs1
-							};
-							self.pc += 4;
-							let csr_value_new = csr_value_old & !csr_bits_new;
-							return self.write_csr(csr, csr_value_new);
-						},
-					}
-				},
-				Op::MAdd => {
-					let rd = opcode.rd();
-					let rm = opcode.fp_rm();
-					let rs1 = opcode.rs1();
-					let rs2 = opcode.rs2();
-					let rs3 = opcode.rs3();
-					// todo
-				},
-				Op::MSub => {
-					let rd = opcode.rd();
-					let rm = opcode.fp_rm();
-					let rs1 = opcode.rs1();
-					let rs2 = opcode.rs2();
-					let rs3 = opcode.rs3();
-					// todo
-				},
-				Op::NMAdd => {
-					let rd = opcode.rd();
-					let rm = opcode.fp_rm();
-					let rs1 = opcode.rs1();
-					let rs2 = opcode.rs2();
-					let rs3 = opcode.rs3();
-					// todo
-				},
-				Op::NMSub => {
-					let rd = opcode.rd();
-					let rm = opcode.fp_rm();
-					let rs1 = opcode.rs1();
-					let rs2 = opcode.rs2();
-					let rs3 = opcode.rs3();
-					// todo
-				},
-				Op::OpFp => {
-					let rd = opcode.rd();
-					let rs1 = opcode.rs1();
-					let rs2 = opcode.rs2();
-					let rm = opcode.fp_rm();
-					let funct7 = opcode.funct7_fp();
-					match funct7 {
-						FpFunct7::Add_S => {
-							// todo
-						},
-						FpFunct7::Sub_S => {
-							// todo
-						},
-						FpFunct7::Mul_S => {
-							// todo
-						},
-						FpFunct7::Div_S => {
-							// todo
-						},
-						FpFunct7::Sqrt_S => {
-							// todo
-						},
-						FpFunct7::Sign_S => {
-							// todo
-						},
-						FpFunct7::MinMax_S => {
-							// todo
-						},
-						FpFunct7::CvtW_S => {
-							// todo
-						},
-						FpFunct7::MvXWClass_S => {
-							// todo
-						},
-						FpFunct7::Cmp_S => {
-							// todo
-						},
-						FpFunct7::CvtS_W => {
-							// todo
-						},
-						FpFunct7::MvWX_S => {
-							// todo
-						},
-					}
+						}
+						return self.write_csr(csr, csr_value_new);
+					},
+					SystemFunct3::CsrRSI => {
+						if cfg!(feature = "cpu_debug") { println!("csrrsi"); }
+						let csr_value_old = self.read_csr(csr);
+						let csr_bits_new = if (rs1 & 0x10) != 0 {
+							rs1 & 0xFFFFFFF0
+						} else {
+							rs1
+						};
+						self.pc += 4;
+						let csr_value_new = csr_value_old | csr_bits_new;
+						return self.write_csr(csr, csr_value_new);
+					},
+					SystemFunct3::CsrRCI => {
+						if cfg!(feature = "cpu_debug") { println!("csrrci"); }
+						let csr_value_old = self.read_csr(csr);
+						let csr_bits_new = if (rs1 & 0x10) != 0 {
+							rs1 & 0xFFFFFFF0
+						} else {
+							rs1
+						};
+						self.pc += 4;
+						let csr_value_new = csr_value_old & !csr_bits_new;
+						return self.write_csr(csr, csr_value_new);
+					},
+					SystemFunct3::Unknown => {
+						return self.illegal_instruction(opcode);
+					},
 				}
-				_ => {	
-					if cfg!(feature = "cpu_debug") { println!("unknown opcode: {:#08}", opcode_value); }
-					self.pending_exception = Some(Exception::IllegalInstruction{
-						op: opcode_value,
-						addr: self.pc
-					});
-					return false
+			},
+			Op::MAdd => {
+				let rd = opcode.rd();
+				let rm = opcode.fp_rm();
+				let rs1 = opcode.rs1();
+				let rs2 = opcode.rs2();
+				let rs3 = opcode.rs3();
+				// todo
+			},
+			Op::MSub => {
+				let rd = opcode.rd();
+				let rm = opcode.fp_rm();
+				let rs1 = opcode.rs1();
+				let rs2 = opcode.rs2();
+				let rs3 = opcode.rs3();
+				// todo
+			},
+			Op::NMAdd => {
+				let rd = opcode.rd();
+				let rm = opcode.fp_rm();
+				let rs1 = opcode.rs1();
+				let rs2 = opcode.rs2();
+				let rs3 = opcode.rs3();
+				// todo
+			},
+			Op::NMSub => {
+				let rd = opcode.rd();
+				let rm = opcode.fp_rm();
+				let rs1 = opcode.rs1();
+				let rs2 = opcode.rs2();
+				let rs3 = opcode.rs3();
+				// todo
+			},
+			Op::OpFp => {
+				let rd = opcode.rd();
+				let rs1 = opcode.rs1();
+				let rs2 = opcode.rs2();
+				let rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
+				let funct7 = opcode.funct7_fp();
+				match funct7 {
+					FpFunct7::Add_S => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let result = a + b;
+						self.set_fpr(rd, result);
+					},
+					FpFunct7::Sub_S => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let result = a - b;
+						self.set_fpr(rd, result);
+					},
+					FpFunct7::Mul_S => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let result = a * b;
+						self.set_fpr(rd, result);
+					},
+					FpFunct7::Div_S => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let result = a / b;
+						self.set_fpr(rd, result);
+					},
+					FpFunct7::Sqrt_S => {
+						// todo
+					},
+					FpFunct7::Sign_S => {
+						// todo
+					},
+					FpFunct7::MinMax_S => {
+						// todo
+					},
+					FpFunct7::CvtW_S => {
+						// todo
+					},
+					FpFunct7::MvXWClass_S => {
+						// todo
+					},
+					FpFunct7::Cmp_S => {
+						// todo
+					},
+					FpFunct7::CvtS_W => {
+						// todo
+					},
+					FpFunct7::MvWX_S => {
+						// todo
+					},
+					FpFunct7::Unknown => {
+						return self.illegal_instruction(opcode);
+					}
 				}
 			}
-		} else {
-			self.pending_exception = Some(Exception::IllegalInstruction{
-				op: opcode_value,
-				addr: self.pc
-			});
-			return false
+			_ => {
+				return self.illegal_instruction(opcode);
+			}
 		}
 		true
+	}
+	
+	fn illegal_instruction(&mut self, opcode: Opcode) -> bool {
+		if cfg!(feature = "cpu_debug") { println!("unknown opcode: {:#08}", opcode.value); }
+		self.pending_exception = Some(Exception::IllegalInstruction{
+			op: opcode.value,
+			addr: self.pc
+		});
+		return false
 	}
 	
 	pub fn step_break(&mut self) {

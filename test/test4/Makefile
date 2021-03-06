@@ -5,8 +5,8 @@ RM = rm -rf
 MKDIR = mkdir -p
 
 C_OPT = -O2
-C_FLAGS = -ffreestanding -march=rv32im -mabi=ilp32 -c $(C_OPT)
-AS_FLAGS = -ffreestanding -march=rv32im  -mabi=ilp32 -c 
+C_FLAGS = -ffreestanding -march=rv32imf -mabi=ilp32 -c $(C_OPT)
+AS_FLAGS = -ffreestanding -march=rv32imf  -mabi=ilp32 -c 
 
 LINKER_SCRIPT = link.ld
 
