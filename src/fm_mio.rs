@@ -1,15 +1,16 @@
-use std::{cell::UnsafeCell, ops::{Deref, DerefMut}, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}};
+use std::{cell::UnsafeCell, ops::{Deref, DerefMut}, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}, usize};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use core::convert::{AsMut, AsRef};
 use atomic_counter::{AtomicCounter, ConsistentCounter};
 
-use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
+use rv_vsys::{MTimer, MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, sound_device::SoundDevice};
+use crate::{cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, mtimer::{self, MTimerPeripheral}, sound_device::SoundDevice};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
 const LOCK_GRANULARITY: usize = 0x1000;
+const HART_COUNT: usize = 2;
 
 struct ArcMutPtr<T: ?Sized> {
 	data_ptr: *mut T,
@@ -73,8 +74,8 @@ unsafe impl<T: ?Sized> Send for ArcMutPtr<T> {
 }
 
 enum MemLockHold {
-	Read(u32, RwLockReadGuard<'static, ()>),
-	Write(u32, RwLockWriteGuard<'static, ()>, Arc<AtomicUsize>, Arc<ConsistentCounter>, ),
+	Read(u32, RwLockReadGuard<'static, ()>, Arc<AtomicUsize>),
+	Write(u32, RwLockWriteGuard<'static, ()>, Arc<AtomicUsize>, Arc<ConsistentCounter>),
 	Clear,
 }
 
@@ -107,6 +108,8 @@ pub struct FmMemoryIO {
 	write_cycle_counter: Arc<ConsistentCounter>,
 	id_counter: Arc<ConsistentCounter>,
 	interface_id: u32,
+	hart_id: u32,
+	mtimers: Arc<[Arc<MTimerPeripheral>]>,
 }
 
 unsafe impl Send for FmMemoryIO {
@@ -150,7 +153,9 @@ impl Clone for FmMemoryIO {
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: self.write_cycle_counter.clone(),
 			id_counter: self.id_counter.clone(),
-			interface_id: self.id_counter.inc() as u32
+			interface_id: self.id_counter.inc() as u32,
+			hart_id: self.hart_id,
+			mtimers: self.mtimers.clone()
 		}
 	}
 }
@@ -161,6 +166,10 @@ impl FmMemoryIO {
 		for _ in 0 .. (RAM_SIZE / LOCK_GRANULARITY) {
 			lock_vec.push(Arc::new(PageGaurd::new()));
 		}
+		let mut mtimers = Vec::new();
+		for _ in 0 .. HART_COUNT {
+			mtimers.push(Arc::new(MTimerPeripheral::new()))
+		};
 		// the problem i'm having is that page_locks is initialized with clone(), meaning every page shares the same Arc'd PageGaurd
 		// to solve, fill lock_vec with individual Arc<PageGaurd>'s constructed separately
 		FmMemoryIO {
@@ -176,7 +185,9 @@ impl FmMemoryIO {
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: Arc::new(ConsistentCounter::new(1)),
 			id_counter: Arc::new(ConsistentCounter::new(1)),
-			interface_id: 0
+			interface_id: 0,
+			hart_id: 0xFFFF_FFFF,
+			mtimers: mtimers.into()
 		}
 	}
 	
@@ -184,22 +195,54 @@ impl FmMemoryIO {
 		let page_num = addr / 0x1000;
 		unsafe {
 			match &*self.mem_lock_hold_i.get() {
-				&MemLockHold::Read(page, _) => if page == page_num {
+				&MemLockHold::Read(page, ..) => if page == page_num {
 					return;
 				},
 				_ => {}
 			}
 			match &*self.mem_lock_hold_d.get() {
-				&MemLockHold::Read(page, _) => if page != page_num {
+				&MemLockHold::Read(page, ..) => if page != page_num {
 					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
-					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read());
+					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(), self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
 				},
 				&MemLockHold::Write(page, _, _, _) => if page != page_num {
 					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
-					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read());
+					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(), self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
 				},
 				&MemLockHold::Clear => {
-					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read());
+					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(), self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
+				}
+			}
+		}
+	}
+	
+	pub fn ram_sync_read_ll(&self, addr: u32) -> (usize, u32) {
+		let page_num = addr / 0x1000;
+		unsafe {
+			match &*self.mem_lock_hold_i.get() {
+				MemLockHold::Read(page, _, write_cycle) => if *page == page_num {
+					return (write_cycle.load(Ordering::SeqCst), page_num);
+				},
+				_ => {}
+			}
+			match &*self.mem_lock_hold_d.get() {
+				MemLockHold::Read(page, _, write_cycle) => if *page != page_num {
+					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
+					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(), self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
+					(self.page_locks.deref_mut_static()[page_num as usize].write_cycle.load(Ordering::SeqCst), page_num)
+				} else {
+					(write_cycle.load(Ordering::SeqCst), page_num)
+				},
+				MemLockHold::Write(page, _, write_cycle, _) => if *page != page_num {
+					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
+					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(), self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
+					(self.page_locks.deref_mut_static()[page_num as usize].write_cycle.load(Ordering::SeqCst), page_num)
+				} else {
+					(write_cycle.load(Ordering::SeqCst), page_num)
+				},
+				MemLockHold::Clear => {
+					*self.mem_lock_hold_d.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(), self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
+					(self.page_locks.deref_mut_static()[page_num as usize].write_cycle.load(Ordering::SeqCst), page_num)
 				}
 			}
 		}
@@ -209,7 +252,7 @@ impl FmMemoryIO {
 		let page_num = addr / 0x1000;
 		unsafe {
 			match &*self.mem_lock_hold_d.get() {
-				&MemLockHold::Read(page, _) => if page == page_num {
+				&MemLockHold::Read(page, ..) => if page == page_num {
 					return;
 				},
 				&MemLockHold::Write(page, _, _, _) => if page == page_num {
@@ -218,15 +261,15 @@ impl FmMemoryIO {
 				_ => {}
 			}
 			match &*self.mem_lock_hold_i.get() {
-				&MemLockHold::Read(page, _) => if page != page_num {
+				&MemLockHold::Read(page, ..) => if page != page_num {
 					*self.mem_lock_hold_i.get() = MemLockHold::Clear;
-					*self.mem_lock_hold_i.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read());
+					*self.mem_lock_hold_i.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(), self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
 				},
 				&MemLockHold::Write(_, _, _, _) => {
 					panic!("instruction mem lock hold should never have Write status!");
 				},
 				&MemLockHold::Clear => {
-					*self.mem_lock_hold_i.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read());
+					*self.mem_lock_hold_i.get() = MemLockHold::Read(page_num, self.page_locks.deref_mut_static()[page_num as usize].lock.read(),  self.page_locks.deref_mut_static()[page_num as usize].write_cycle.clone());
 				}
 			}
 		}
@@ -236,7 +279,7 @@ impl FmMemoryIO {
 		let page_num = addr / 0x1000;
 		unsafe {
 			match &*self.mem_lock_hold_i.get() {
-				&MemLockHold::Read(page, _) => if page == page_num {
+				&MemLockHold::Read(page, ..) => if page == page_num {
 					*self.mem_lock_hold_i.get() = MemLockHold::Clear;
 				},
 				_ => {}
@@ -259,6 +302,58 @@ impl FmMemoryIO {
 				}
 			}
 		}
+	}
+	
+	pub fn ram_sync_write_ll(&self, addr: u32, ll_write_cycle: usize, page_key: u32) -> bool {
+		let page_num = addr / 0x1000;
+		if page_key != page_num {
+			return false;
+		}
+		unsafe {
+			match &*self.mem_lock_hold_i.get() {
+				&MemLockHold::Read(page, ..) => if page == page_num {
+					*self.mem_lock_hold_i.get() = MemLockHold::Clear;
+				},
+				_ => {}
+			}
+			match &*self.mem_lock_hold_d.get() {
+				MemLockHold::Read(_, _, write_cycle) => {
+					if write_cycle.load(Ordering::SeqCst) != ll_write_cycle {
+						return false;
+					}
+					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
+					let page_gaurd = &self.page_locks.deref_mut_static()[page_num as usize];
+					*self.mem_lock_hold_d.get() = MemLockHold::Write(page_num, page_gaurd.lock.write(), page_gaurd.write_cycle.clone(), self.write_cycle_counter.clone());
+					if page_gaurd.write_cycle.load(Ordering::SeqCst) != ll_write_cycle {
+						return false;
+					}
+				},
+				MemLockHold::Write(page, _, write_cycle, _) => if *page != page_num {
+					*self.mem_lock_hold_d.get() = MemLockHold::Clear;
+					let page_gaurd = &self.page_locks.deref_mut_static()[page_num as usize];
+					*self.mem_lock_hold_d.get() = MemLockHold::Write(page_num, page_gaurd.lock.write(), page_gaurd.write_cycle.clone(), self.write_cycle_counter.clone());
+					if page_gaurd.write_cycle.load(Ordering::SeqCst) != ll_write_cycle {
+						return false;
+					}
+				} else {
+					if write_cycle.load(Ordering::SeqCst) != ll_write_cycle {
+						return false;
+					}
+				},
+				&MemLockHold::Clear => {
+					let page_gaurd = &self.page_locks.deref_mut_static()[page_num as usize];
+					if page_gaurd.write_cycle.load(Ordering::SeqCst) != ll_write_cycle {
+						return false;
+					}
+					let lock_gaurd = page_gaurd.lock.write();
+					*self.mem_lock_hold_d.get() = MemLockHold::Write(page_num, lock_gaurd, page_gaurd.write_cycle.clone(), self.write_cycle_counter.clone());
+					if page_gaurd.write_cycle.load(Ordering::SeqCst) != ll_write_cycle {
+						return false;
+					}
+				}
+			}
+		}
+		true
 	}
 	
 	#[allow(dead_code)]
@@ -288,7 +383,18 @@ impl FmMemoryIO {
 	}
 }
 
-impl MemIO for FmMemoryIO {
+impl MemIO<MTimerPeripheral> for FmMemoryIO {
+	fn set_hart_id(&mut self, id: u32) {
+		self.hart_id = id;
+	}
+	
+	fn get_mtimer(&self, hart_id: u32) -> Option<Arc<MTimerPeripheral>> {
+		if hart_id as usize >= self.mtimers.len() {
+			return None;
+		}
+		Some(self.mtimers[hart_id as usize].clone())
+	}
+	
 	fn access_break(&mut self) {
 		unsafe {
 			match &*self.mem_lock_hold_d.get() {
@@ -365,7 +471,15 @@ impl MemIO for FmMemoryIO {
 					},
 					5 => {
 						self.sound_device.get().unwrap().read_32(peripheral_offset)
-					}
+					},
+					6 => {
+						if self.hart_id as usize <= HART_COUNT {
+							let device = self.mtimers[self.hart_id as usize].clone();
+							device.read_32(peripheral_offset)
+						} else {
+							MemReadResult::ErrUnmapped
+						}
+					},
 					_ => {
 						MemReadResult::ErrUnmapped
 					}
@@ -385,6 +499,37 @@ impl MemIO for FmMemoryIO {
 				MemReadResult::Ok(LE::read_u32(&self.ram.as_ref()[addr as usize ..]))
 			},
 			_ => MemReadResult::ErrUnmapped,
+		}
+	}
+	
+	fn read_32_ll(&self, addr: u32) -> (MemReadResult<u32>, usize, u32) {
+		if addr == 0 {
+			return (MemReadResult::ErrUnmapped, 0, 0);
+		}
+		if (addr & 0b11) != 0 {
+			return (MemReadResult::ErrAlignment, 0, 0);
+		}
+		match (addr + 3) >> 28 {
+			0 => {
+				let (write_cycle, page_num) = self.ram_sync_read_ll(addr);
+				(MemReadResult::Ok(LE::read_u32(&self.ram.as_ref()[addr as usize ..])), write_cycle, page_num)
+			},
+			_ => (MemReadResult::ErrUnmapped, 0, 0),
+		}
+	}
+	
+	fn lock_for_modify(&mut self, addr: u32) -> MemWriteResult {
+		if addr == 0 {
+			return MemWriteResult::ErrUnmapped;
+		}
+		match addr >> 28 {
+			0 => {
+				self.ram_sync_write(addr);
+				MemWriteResult::Ok
+			}
+			_ => {
+				MemWriteResult::ErrUnmapped
+			}
 		}
 	}
 	
@@ -452,12 +597,36 @@ impl MemIO for FmMemoryIO {
 						let device = self.sound_device.clone();
 						device.get().unwrap().write_32(self, peripheral_offset, value)
 					},
+					6 => {
+						if self.hart_id as usize <= HART_COUNT {
+							let device = self.mtimers[self.hart_id as usize].clone();
+							device.write_32(peripheral_offset, value)
+						} else {
+							MemWriteResult::ErrUnmapped
+						}
+					}
 					_ => {
 						MemWriteResult::ErrUnmapped
 					}
 				}
 			}
 			_ => MemWriteResult::ErrUnmapped
+		}
+	}
+	
+	fn write_32_cs(&mut self, addr: u32, value: u32, ll_cycle: usize, page_key: u32) -> Option<MemWriteResult> {
+		if addr == 0 {
+			return None;
+		}
+		match addr >> 28 {
+			0 => {
+				if !self.ram_sync_write_ll(addr, ll_cycle, page_key) {
+					return None;
+				}
+				LE::write_u32(&mut self.ram.as_mut()[addr as usize ..], value);
+				Some(MemWriteResult::Ok)
+			},
+			_ => None,
 		}
 	}
 }

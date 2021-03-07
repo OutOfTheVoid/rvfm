@@ -1,11 +1,11 @@
 use rv_vsys::{Cpu, MemWriteResult, MemReadResult};
-use crate::{application_core, fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO};
+use crate::{application_core, fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO, mtimer::MTimerPeripheral};
 use std::{fmt, thread, time::Duration};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
 enum Cpu1State {
-	Idle(Cpu<FmMemoryIO, FmInterruptBus>),
+	Idle(Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>),
 	Running,
 }
 
@@ -37,7 +37,7 @@ const OFFSET_STARTUP_TRIGGER: u32 = 4;
 const OFFSET_HAS_STARTED: u32 = 8;
 
 impl Cpu1Controller {
-	pub fn new(cpu: Cpu<FmMemoryIO, FmInterruptBus>) -> Self {
+	pub fn new(cpu: Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>) -> Self {
 		Self {
 			lock: Arc::new(Mutex::new(Cpu1ControllerInternal {
 				state: Cpu1State::Idle(cpu),

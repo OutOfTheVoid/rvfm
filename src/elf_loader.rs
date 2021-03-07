@@ -1,6 +1,6 @@
 use mem::size_of;
 use simple_endian::{u32le, u16le};
-use rv_vsys::MemIO;
+use rv_vsys::{MemIO, MTimer};
 use std::{collections::HashMap, fmt::Display, fmt, mem};
 use bytemuck::{Pod, Zeroable, from_bytes};
 
@@ -712,7 +712,7 @@ fn load_section<Mem: MemIO>(_file_data: &[u8], _elf_header: &ElfHeader, _section
 }
 */
 
-fn load_program_header<Mem: MemIO>(file_data: &[u8], program_header: &ElfProgramHeaderEntry, mio: &mut Mem, base_addr: u32) -> Result<(), String> {
+fn load_program_header<Timer: MTimer, Mem: MemIO<Timer>>(file_data: &[u8], program_header: &ElfProgramHeaderEntry, mio: &mut Mem, base_addr: u32) -> Result<(), String> {
 	match program_header.header_type {
 		ElfProgramHeaderType::Load => {
 			let v_addr = program_header.virt_addr;
@@ -743,7 +743,7 @@ fn load_program_header<Mem: MemIO>(file_data: &[u8], program_header: &ElfProgram
 	Ok(())
 }
 
-pub fn load_elf<Mem: MemIO>(file_data: &[u8], mio: &mut Mem, image_base: u32) -> Result<u32, String> {
+pub fn load_elf<Timer: MTimer, Mem: MemIO<Timer>>(file_data: &[u8], mio: &mut Mem, image_base: u32) -> Result<u32, String> {
 	let header_size = mem::size_of::<ElfHeaderRaw>();
 	if file_data.len() < header_size {
 		return Err("Elf file too small to be Elf format".to_string())

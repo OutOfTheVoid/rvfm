@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::{MemIO, MemReadResult, MemWriteResult, Opcode, Op, OpImmFunct3, StoreFunct3, LoadFunct3, OpFunct3Funct7, BranchFunct3, LoadFpFunct3, StoreFpFunct3, SystemFunct3, SystemIntFunct7, InterruptBus, FpFunct7, FpSignFunct3, FpMinMaxFunct3, FCvtType, FpRm, FMvXWClassFunct3, FpCmpFunct3};
+use crate::{AtomicFunct7, AtomicSizeFunct3, BranchFunct3, FCvtType, FMvXWClassFunct3, FpCmpFunct3, FpFunct7, FpMinMaxFunct3, FpRm, FpSignFunct3, InterruptBus, LoadFpFunct3, LoadFunct3, MTimer, MemIO, MemReadResult, MemWriteResult, Op, OpFunct3Funct7, OpImmFunct3, Opcode, StoreFpFunct3, StoreFunct3, SystemFunct3, SystemIntFunct7};
 use std::{time::{Duration, Instant}, sync::Arc};
 use num::Signed;
 use parking_lot::{Condvar, Mutex};
@@ -158,7 +158,7 @@ struct PendingInt {
 	tval: u32,
 }
 
-pub struct Cpu <MIO: MemIO, IntBus: InterruptBus> {
+pub struct Cpu <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus> {
 	xr: [u32; 31],
 	fr: [f32; 32],
 	pc: u32,
@@ -173,6 +173,9 @@ pub struct Cpu <MIO: MemIO, IntBus: InterruptBus> {
 	waiting_for_interrupt: bool,
 	wakeup_handle: CpuWakeupHandle,
 	fcsr: u32,
+	lr_write_cycle: usize,
+	lr_write_key: u32,
+	timer: Arc<Timer>
 }
 
 #[derive(Debug, Clone)]
@@ -203,8 +206,10 @@ impl CpuWakeupHandle {
 	}
 }
 
-impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
-	pub fn new(mio: MIO, int_bus: IntBus, wakeup_handle: CpuWakeupHandle, id: u32) -> Cpu<MIO, IntBus> {
+impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, IntBus> {
+	pub fn new(mut mio: MIO, int_bus: IntBus, wakeup_handle: CpuWakeupHandle, id: u32) -> Self {
+		mio.set_hart_id(id);
+		let timer = mio.get_mtimer(id).unwrap();
 		Cpu {
 			xr: [0; 31],
 			fr: [0f32; 32],
@@ -219,7 +224,10 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 			pending_exception: None,
 			waiting_for_interrupt: false,
 			wakeup_handle: wakeup_handle,
-			fcsr: 0
+			fcsr: 0,
+			lr_write_cycle: 0,
+			lr_write_key: 0xFFFF_FFFF,
+			timer,
 		}
 	}
 
@@ -235,11 +243,16 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 		self.trap_csrs.reset();
 		self.pending_exception = None;
 		self.waiting_for_interrupt = false;
+		self.lr_write_cycle = 0;
+		self.lr_write_key = 0xFFFF_FFFF;
 	}
 	
 	pub fn check_timer(&mut self) {
-		//let t = self.get_time();
-		// todo...
+		if self.timer.check_timer() {
+			self.trap_csrs.mip |= MIP_MTIP;
+		} else {
+			self.trap_csrs.mip &= !MIP_MTIP;
+		}
 	}
 	
 	pub fn run_loop(&mut self, inst_per_period: u32, period_length: Duration) {
@@ -1249,8 +1262,362 @@ impl <MIO: MemIO, IntBus: InterruptBus> Cpu<MIO, IntBus> {
 						return self.illegal_instruction(opcode);
 					}
 				}
-			}
-			_ => {
+			},
+			Op::Fence => {
+				self.pc += 4; // No-op since our memory and peripherals are sequentially consistent :)	
+			},
+			Op::Atomic => {
+				// todo
+				let atomic_op = opcode.funct7_atomic();
+				let size = opcode.funct3_atomicsize();
+				let rd = opcode.rd();
+				let rs1 = opcode.rs1();
+				let rs2 = opcode.rs1();
+				match atomic_op {
+					AtomicFunct7::LoadReserve => {
+						if rs2 != 0 {
+							return self.illegal_instruction(opcode);
+						}
+						match size {
+							AtomicSizeFunct3::Word => {
+								let load_addr = self.get_gpr(rs1);
+								let (load_result, write_cycle, write_key) = self.mio.read_32_ll(load_addr);
+								match load_result {
+									MemReadResult::Ok(value) => {
+										self.write_csr(rd, value);
+										self.lr_write_cycle = write_cycle;
+										self.lr_write_key = write_key;
+									},
+									MemReadResult::ErrAlignment => {
+										self.pending_exception = Some(Exception::LoadAddressMisaligned {
+											instr_addr: self.pc,
+											load_addr: load_addr
+										});
+										return false;
+									},
+									_ => {
+										self.pending_exception = Some(Exception::LoadAccessFault {
+											instr_addr: self.pc,
+											load_addr: load_addr
+										});
+										return false;
+									}
+								}
+							},
+							_ => {
+								return self.illegal_instruction(opcode);
+							}
+						}
+					},
+					AtomicFunct7::StoreConditional => {
+						let store_addr = self.get_gpr(rs1);
+						let store_value = self.get_gpr(rs2);
+						let write_key = self.lr_write_key;
+						self.lr_write_key = 0xFFFF_FFFF;
+						if let Some(write_result) = self.mio.write_32_cs(store_addr, store_value, self.lr_write_cycle, write_key) {
+							match write_result {
+								MemWriteResult::Ok => {
+									self.set_gpr(rd, 0);
+								},
+								MemWriteResult::ErrAlignment => {
+									self.pending_exception = Some(Exception::StoreAddressMisaligned {
+										instr_addr: self.pc,
+										store_addr: store_addr
+									});
+									return false;
+								},
+								_ => {
+									self.pending_exception = Some(Exception::StoreAccessFault {
+										instr_addr: self.pc,
+										store_addr: store_addr
+									});
+									return false;
+								}
+							}
+						} else {
+							self.set_gpr(rd, 1);
+						}
+					},
+					AtomicFunct7::Swap => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, new_value);
+					},
+					AtomicFunct7::Add => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, old_value.wrapping_add(new_value)).unwrap();
+						
+					},
+					AtomicFunct7::Xor => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, old_value ^ new_value).unwrap();
+					},
+					AtomicFunct7::And => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, old_value & new_value).unwrap();
+					},
+					AtomicFunct7::Or => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, old_value | new_value).unwrap();
+					},
+					AtomicFunct7::Min => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, (old_value as i32).min(new_value as i32) as u32).unwrap();
+					},
+					AtomicFunct7::Max => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, (old_value as i32).max(new_value as i32) as u32).unwrap();
+					},
+					AtomicFunct7::MinU => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, old_value.min(new_value)).unwrap();
+					},
+					AtomicFunct7::MaxU => {
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						let swap_addr = self.get_gpr(rs1);
+						if (swap_addr & 0b11) != 0 {
+							self.pending_exception = Some(Exception::StoreAddressMisaligned {
+								instr_addr: self.pc,
+								store_addr: swap_addr,
+							});
+							return false;
+						}
+						match self.mio.lock_for_modify(swap_addr) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.pending_exception = Some(Exception::StoreAccessFault {
+									instr_addr: self.pc,
+									store_addr: swap_addr,
+								});
+								return false;
+							}
+						}
+						let new_value = self.get_gpr(rs2);
+						let old_value = self.mio.read_32(swap_addr).unwrap();
+						self.set_gpr(rd, old_value);
+						self.mio.write_32(swap_addr, old_value.max(new_value)).unwrap();
+					},
+					AtomicFunct7::Unknown => {
+						return self.illegal_instruction(opcode);
+					},
+				}
+				self.pc += 4;
+			},
+			Op::Unknown => {
 				return self.illegal_instruction(opcode);
 			}
 		}

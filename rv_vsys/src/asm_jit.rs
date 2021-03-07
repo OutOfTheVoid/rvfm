@@ -1,5 +1,5 @@
 use crate::{BranchFunct3, LoadFunct3, Op, OpFunct3Funct7, OpImmFunct3, StoreFunct3, SystemFunct3};
-use crate::mem::{MemIO, MemWriteResult};
+pub use crate::mem::{MemIO, MemWriteResult, MTimer};
 use num_traits::ToPrimitive;
 
 #[allow(non_camel_case_types)]
@@ -138,7 +138,7 @@ impl AsmJit {
 		}
 	}
 
-	pub fn write_to_mem<MIO: MemIO>(&self, mio: &mut MIO) -> MemWriteResult {
+	pub fn write_to_mem<Timer: MTimer, MIO: MemIO<Timer>>(&self, mio: &mut MIO) -> MemWriteResult {
 		for i in 0 .. self.bytes.len() {
 			let write_result = mio.write_8(self.start_address + i as u32, self.bytes[i]);
 			match write_result {

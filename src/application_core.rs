@@ -2,7 +2,7 @@ use std::{env::args, time::Duration};
 use std::fs::File;
 use std::io::Read;
 
-use crate::{cpu1_controller::Cpu1Controller};
+use crate::{cpu1_controller::Cpu1Controller, mtimer::MTimerPeripheral};
 
 use rv_vsys::{Cpu, CpuWakeupHandle};
 use crate::fm_mio::FmMemoryIO;
@@ -13,8 +13,8 @@ pub const CPU_INSTRUCTIONS_PER_PERIOD: u32 = 50000;
 pub const CPU_PERIOD_MICROSECONDS: u64 = 2500;
 
 pub struct ApplicationCore {
-	cpu0: Cpu<FmMemoryIO, FmInterruptBus>,
-	cpu1: Cpu<FmMemoryIO, FmInterruptBus>,
+	cpu0: Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>,
+	cpu1: Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>,
 }
 
 impl ApplicationCore {

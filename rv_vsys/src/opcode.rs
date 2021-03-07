@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use num_derive::FromPrimitive;
 use num_derive::ToPrimitive;
 use num_traits::FromPrimitive;
@@ -576,6 +578,8 @@ impl FpMinMaxFunct3 {
 	}
 }
 
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
 pub enum FCvtType {
 	Signed,
 	Unsigned,
@@ -600,6 +604,8 @@ impl FCvtType {
 	}
 }
 
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
 pub enum FpCmpFunct3 {
 	LEq,
 	Lt,
@@ -623,6 +629,82 @@ impl FpCmpFunct3 {
 			Self::Lt => 0b001,
 			Self::Eq => 0b010,
 			Self::Unknown => 0b011,
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum AtomicFunct7 {
+	LoadReserve,
+	StoreConditional,
+	Swap,
+	Add,
+	Xor,
+	And,
+	Or,
+	Min,
+	Max,
+	MinU,
+	MaxU,
+	Unknown,
+}
+
+impl AtomicFunct7 {
+	pub fn from_raw(raw: u32) -> Self {
+		match raw {
+			0b00000 => Self::Add,
+			0b00001 => Self::Swap,
+			0b00010 => Self::LoadReserve,
+			0b00011 => Self::StoreConditional,
+			0b00100 => Self::Xor,
+			0b01000 => Self::Or,
+			0b01100 => Self::And,
+			0b10000 => Self::Min,
+			0b10100 => Self::Max,
+			0b11000 => Self::MinU,
+			0b11100 => Self::MaxU,
+			_ => Self::Unknown,
+		}
+	}
+	
+	pub fn to_raw(&self) -> u32 {
+		match self {
+			Self::LoadReserve =>      0b00010,
+			Self::StoreConditional => 0b00011,
+			Self::Swap =>             0b00001,
+			Self::Add =>              0b00000,
+			Self::Xor =>              0b00100,
+			Self::And =>              0b00100,
+			Self::Or =>               0b01000,
+			Self::Min =>              0b10000,
+			Self::Max =>              0b10100,
+			Self::MinU =>             0b11000,
+			Self::MaxU =>             0b11100,
+			Self::Unknown =>          0b11101,
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub enum AtomicSizeFunct3 {
+	Word,
+	Unknown,
+}
+
+impl AtomicSizeFunct3 {
+	pub fn from_raw(raw: u32) -> Self {
+		match raw {
+			0b010 => Self::Word,
+			_ => Self::Unknown,
+		}
+	}
+	
+	pub fn to_raw(&self) -> u32 {
+		match self {
+			Self::Word => 0b010,
+			Self::Unknown => 0b000,
 		}
 	}
 }
@@ -724,6 +806,10 @@ impl Opcode {
 		BranchFunct3::from_raw(self.funct3())
 	}
 	
+	pub fn funct3_atomicsize(&self) -> AtomicSizeFunct3 {
+		AtomicSizeFunct3::from_raw(self.funct3())
+	}
+	
 	pub fn funct3_system(&self) -> SystemFunct3 {
 		SystemFunct3::from_raw(self.funct3())
 	}
@@ -734,6 +820,10 @@ impl Opcode {
 	
 	pub fn funct7_fp(&self) -> FpFunct7 {
 		FpFunct7::from_raw(self.funct7())
+	}
+	
+	pub fn funct7_atomic(&self) -> AtomicFunct7 {
+		AtomicFunct7::from_raw(self.funct7())
 	}
 
 	pub fn rs1(&self) -> u32 {
