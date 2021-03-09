@@ -3,9 +3,9 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use core::convert::{AsMut, AsRef};
 use atomic_counter::{AtomicCounter, ConsistentCounter};
 
-use rv_vsys::{MTimer, MemIO, MemReadResult, MemWriteResult};
+use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, mtimer::{self, MTimerPeripheral}, sound_device::SoundDevice};
+use crate::{cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, mtimer::{MTimerPeripheral}, sound_device::SoundDevice, math_accel::MathAccelerator};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
@@ -110,6 +110,7 @@ pub struct FmMemoryIO {
 	interface_id: u32,
 	hart_id: u32,
 	mtimers: Arc<[Arc<MTimerPeripheral>]>,
+	math_accelerators: Arc<[Arc<MathAccelerator>]>,
 }
 
 unsafe impl Send for FmMemoryIO {
@@ -155,7 +156,8 @@ impl Clone for FmMemoryIO {
 			id_counter: self.id_counter.clone(),
 			interface_id: self.id_counter.inc() as u32,
 			hart_id: self.hart_id,
-			mtimers: self.mtimers.clone()
+			mtimers: self.mtimers.clone(),
+			math_accelerators: self.math_accelerators.clone()
 		}
 	}
 }
@@ -167,8 +169,10 @@ impl FmMemoryIO {
 			lock_vec.push(Arc::new(PageGaurd::new()));
 		}
 		let mut mtimers = Vec::new();
+		let mut math_accelerators = Vec::new();
 		for _ in 0 .. HART_COUNT {
-			mtimers.push(Arc::new(MTimerPeripheral::new()))
+			mtimers.push(Arc::new(MTimerPeripheral::new()));
+			math_accelerators.push(Arc::new(MathAccelerator::new()));
 		};
 		// the problem i'm having is that page_locks is initialized with clone(), meaning every page shares the same Arc'd PageGaurd
 		// to solve, fill lock_vec with individual Arc<PageGaurd>'s constructed separately
@@ -187,7 +191,8 @@ impl FmMemoryIO {
 			id_counter: Arc::new(ConsistentCounter::new(1)),
 			interface_id: 0,
 			hart_id: 0xFFFF_FFFF,
-			mtimers: mtimers.into()
+			mtimers: mtimers.into(),
+			math_accelerators: math_accelerators.into()
 		}
 	}
 	
@@ -480,6 +485,14 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 							MemReadResult::ErrUnmapped
 						}
 					},
+					7 => {
+						if self.hart_id as usize <= HART_COUNT {
+							let device = self.math_accelerators[self.hart_id as usize].clone();
+							device.read_32(peripheral_offset)
+						} else {
+							MemReadResult::ErrUnmapped
+						}
+					}
 					_ => {
 						MemReadResult::ErrUnmapped
 					}
@@ -601,6 +614,14 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 						if self.hart_id as usize <= HART_COUNT {
 							let device = self.mtimers[self.hart_id as usize].clone();
 							device.write_32(peripheral_offset, value)
+						} else {
+							MemWriteResult::ErrUnmapped
+						}
+					},
+					7 => {
+						if self.hart_id as usize <= HART_COUNT {
+							let device = self.math_accelerators[self.hart_id as usize].clone();
+							device.write_32(self, peripheral_offset, value)
 						} else {
 							MemWriteResult::ErrUnmapped
 						}

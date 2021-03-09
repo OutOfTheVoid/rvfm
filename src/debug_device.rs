@@ -75,6 +75,11 @@ impl DebugDevice {
 		println!("DEBUG: {}", data.message_addr);
 	}
 	
+	fn print_debug_u32_hex(&mut self) {
+		let data = self.data.lock().unwrap();
+		println!("DEBUG: {:#010x}", data.message_addr);
+	}
+	
 	fn print_debug_f32(&mut self) {
 		let data = self.data.lock().unwrap();
 		println!("DEBUG: {}", f32::from_bits(data.message_addr));
@@ -113,6 +118,10 @@ impl DebugDevice {
 						},
 						2 => {
 							self.print_debug_f32();
+							MemWriteResult::Ok
+						},
+						3 => {
+							self.print_debug_u32_hex();
 							MemWriteResult::Ok
 						}
 						_ => MemWriteResult::Ok

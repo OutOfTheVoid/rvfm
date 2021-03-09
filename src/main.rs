@@ -11,6 +11,7 @@ mod dsp_dma;
 mod cpu1_controller;
 mod sound_device;
 mod mtimer;
+mod math_accel;
 
 use application_gui::ApplicationGUI;
 

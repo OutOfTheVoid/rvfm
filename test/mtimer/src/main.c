@@ -24,7 +24,6 @@
 #define MTIMER_DUAL_ATOMIC_WRITE_TRIGGER *((volatile uint32_t *)0xF0060040)
 #define MTIMER_DUAL_ATOMIC_SWAP_TRIGGER *((volatile uint32_t *)0xF0060044)
 
-
 int32_t str_len(const char * string) {
 	int32_t count = 0;
 	while (string[count] != '\0') {

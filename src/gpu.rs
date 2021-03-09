@@ -68,6 +68,7 @@ impl GpuWindowEventSink {
 				self.last_present_tex = Some(texture);
 			},
 			None => {
+				println!("none");
 				let mut command_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
 					label: Some("GpuWindowEventSink::render_event()")
 				});
@@ -114,11 +115,22 @@ impl GpuPresentChain {
 	}
 	
 	pub fn present_swap(&mut self, texture: Option<wgpu::Texture>) -> Option<wgpu::Texture> {
+		let mut lock_gaurd = self.chain.lock();
 		let mut swap_state = match texture {
-			Some(tex) => GpuPresentState::Free(tex),
+			Some(tex) => {
+				match &*lock_gaurd {
+					GpuPresentState::Free(_) => {
+						return Some(tex);
+					},
+					GpuPresentState::None => {
+						return Some(tex);
+					},
+					_ => {}
+				}
+				GpuPresentState::Free(tex)
+			},
 			None => GpuPresentState::None
 		};
-		let mut lock_gaurd = self.chain.lock();
 		std::mem::swap(&mut swap_state, &mut *lock_gaurd);
 		match swap_state {
 			GpuPresentState::None => None,
@@ -132,11 +144,11 @@ impl GpuPresentChain {
 	
 	pub fn gpu_swap(&mut self, texture: Option<wgpu::Texture>, device: &wgpu::Device) -> wgpu::Texture{
 		let swap_result = {
+			let mut lock_gaurd = self.chain.lock();
 			let mut swap_state = match texture {
 				Some(texture) => GpuPresentState::Presenting(texture),
 				None => GpuPresentState::None,
 			};
-			let mut lock_gaurd = self.chain.lock();
 			let chain = lock_gaurd.borrow_mut();
 			std::mem::swap(&mut swap_state, chain);
 			match swap_state {
