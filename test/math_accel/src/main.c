@@ -14,7 +14,7 @@
 
 #define GPU_SYNC_INTERRUPT_STATE *((volatile uint32_t *) 0xF0030000)
 
-#include "dspdma.h"
+#include "../../../librvfm/inc/dspdma.h"
 #include "math_accel.h"
 
 int32_t str_len(const char * string) {
@@ -134,41 +134,12 @@ void vsync_interrupt_wait() {
 	}
 }
 
-void dspdma_set_dest32(void * dest, int index) {
-	DSPDMA_TYPE = DSPDMA_DEST_TYPE_MEM32;
-	DSPDMA_INDEX = index;
-	DSPDMA_PARAM0 = (uint32_t) dest;
-	DSPDMA_PARAM1 = 4;
-	DSPDMA_PARAM2 = 0xFFFFFFFF;
-	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_DEST;
-}
-
-void dspdma_op_copy_const32(uint32_t op_index, uint32_t constant, uint32_t dest) {
-	DSPDMA_TYPE = DSPDMA_OP_TYPE_COPY;
-	DSPDMA_INDEX = op_index;
-	DSPDMA_PARAM0 = DSPDMA_IOP_SOURCE_TYPE_CONST;
-	DSPDMA_PARAM1 = constant;
-	DSPDMA_PARAM2 = DSPDMA_IOP_DEST_TYPE_DEST;
-	DSPDMA_PARAM3 = dest;
-	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
-}
-
-void dspdma_op_end(uint32_t op_index) {
-	DSPDMA_TYPE = DSPDMA_OP_TYPE_END;
-	DSPDMA_INDEX = op_index;
-	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
-}
-
-void dspdma_trigger() {
-	DSPDMA_COMMAND = DSPDMA_COMMAND_TRIGGER;
-}
-
 void dma_clear_framebuffer(uint32_t value) {
-	DSPDMA_TRANSFER_SIZE = 256*192;
-	dspdma_set_dest32((void *) GPU_RAW_FRAMEBUFFER, 0);
-	dspdma_op_copy_const32(0, value, 0);
-	dspdma_op_end(1);
-	dspdma_trigger();
+	dspdma_dest_mem32(0, (void *) GPU_RAW_FRAMEBUFFER, 4, DSPDMA_LOOP_INDEX_NEVER);
+	dspdma_source_mem32(0, (void *) GPU_RAW_FRAMEBUFFER, 4, DSPDMA_LOOP_INDEX_NEVER);
+	dspdma_op_copy(0, dspdma_op_source_const(value), dspdma_op_dest_dest(0));
+	dspdma_op_end(2);
+	dspdma_run(256*192);
 }
 
 void loop_clear_framebuffer(uint32_t value) {

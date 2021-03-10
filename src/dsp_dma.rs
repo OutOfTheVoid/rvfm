@@ -51,17 +51,18 @@ enum DspDmaIOpDest {
 enum DspDmaOp {
 	End,
 	Copy {source: DspDmaIOpSource, dest: DspDmaIOpDest},
+	Add {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
 }
 
 #[allow(dead_code)]
 pub struct DspDmaDevice {
-	src_list: [DspDmaSource; 4],
-	dst_list: [DspDmaDest; 4],
+	src_list: [DspDmaSource; SOURCE_COUNT],
+	dst_list: [DspDmaDest; DEST_COUNT],
 	copy_buffer_a: Box<[u32]>,
 	copy_buffer_b: Box<[u32]>,
 	ibuffer_list: Box<[Box<[u32]>]>,
 	fbuffer_list: Box<[Box<[f32]>]>,
-	program: [DspDmaOp; 256],
+	program: [DspDmaOp; MAX_PROGRAM_SIZE as usize],
 	transfer_size: u32,
 	
 	mmreg_type: u32,
@@ -80,7 +81,7 @@ pub struct DspDmaDevice {
 
 const MAX_PROGRAM_SIZE: u32 = 0x100;
 const BUFFER_SIZE: usize = 0x400;
-const BUFFER_COUNT: usize = 4;
+const BUFFER_COUNT: usize = 16;
 const SOURCE_COUNT: usize = 4;
 const DEST_COUNT: usize = 4;
 
@@ -111,6 +112,7 @@ const DEST_TYPE_MEM32: u32 = 3;
 
 const OP_TYPE_END: u32 = 0;
 const OP_TYPE_COPY: u32 = 1;
+const OP_TYPE_ADD: u32 = 2;
 
 const COMMAND_TRIGGER: u32 = 0;
 const COMMAND_WRITE_SOURCE: u32 = 1;
@@ -364,6 +366,30 @@ impl DspDmaDevice {
 								}
 							}
 						}
+					},
+					DspDmaOp::Add {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize].wrapping_add(self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize].wrapping_add((*copy_buffer_src_b)[i as usize]);
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
 					}
 				}
 				pc = pc + 1;
@@ -553,6 +579,26 @@ impl DspDmaDevice {
 						};
 						true
 					},
+					OP_TYPE_ADD => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::Add{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					}
 					_ => {
 						self.mmreg_error = ERROR_TYPE_OUT_OF_RANGE;
 						self.mmreg_error_param0 = self.mmreg_type;
