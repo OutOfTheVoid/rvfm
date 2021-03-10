@@ -7,6 +7,8 @@ Address       | Size                  | Description
 0xF003_0000   | 0x0000_1000 (4 KiB)   | Interrupt Bus Peripheral
 0xF004_0000   | 0x0000_1000 (4 KiB)   | Core 1 Controller
 0xF005_0000   | 0x0000_1000 (4 KiB)   | Sound Peripheral
+0xF006_0000   | 0x0000_1000 (4 KiB)   | MTimer Peripheral
+0xF007_0000   | 0x0000_1000 (4 KiB)   | Math Accelerator
 
 
 Debug Peripheral
@@ -80,3 +82,93 @@ Offset | Name              | Description
 0x0008 | Int Enable        | Sound Interrupt Enable
 0x000C | Frame Pointer     | Sound Frame Pointer
 0x0010 | Copy Trigger      | Sound Frame Copy Trigger
+
+
+MTimer Peripheral
+=================
+
+Offset | Name              | Description
+---------------------------------------------------------------------------
+0x0000 | mtime             | low 32 bits of mtime
+0x0004 | mtime-high        | high 32 bits of mtime
+0x0008 | mtime-buffer low  | low 32 bits of mtime atomic load/store buffer
+0x000C | mtime-buffer high | high 32 bits of mtime atomic load/store buffer
+0x0010 | mtime read trig   | mtime atomic read trigger
+0x0014 | mtime write trig  | mtime atomic write trigger
+0x0018 | mtime swap trig   | mtime atomic swap trigger
+0x0020 | mtimecmp          | low 32 bits of mtimecmp
+0x0024 | mtimecmp-high     | high 32 bits of mtimecmp
+0x0028 | mtimecmp-buff low | low 32 bits of mtimecmp atomic load/store buffer
+0x002C | mtimecmp-buff high| high 32 bits of mtimecmp atomic load/store buffer
+0x0030 | mtimecmp rd trig  | mtimecmp atomic read trigger
+0x0034 | mtimecmp wr trig  | mtimecmp atomic write trigger
+0x0038 | mtimecmp sw trig  | mtimecmp atomic swap trigger
+0x0040 | dual write trig   | mtime and mtimecmp simulatneous atomic write trigger
+0x0040 | dual swap trigger | mtime and mtimecmp simulatneous atomic swap trigger
+
+
+Math Accelerator
+================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | reg 0             | register 0
+0x0004 | reg 1             | register 1
+0x0008 | reg 2             | register 2
+0x000C | reg 3             | register 3
+...    | ...               | ...
+0x00F0 | reg 60            | register 60
+0x00F4 | reg 61            | register 61
+0x00F8 | reg 62            | register 62
+0x00FC | reg 63            | register 63
+-----------------------------------------------------------------------
+0x0100 | vec2 0 load       | vector load trigger for  r0,  r1
+0x0104 | vec2 1 load       | vector load trigger for  r4,  r5
+0x0108 | vec2 2 load       | vector load trigger for  r8,  r9
+...    | ...               | ...
+0x0134 | vec2 13 load      | vector load trigger for  r52, r53
+0x0138 | vec2 14 load      | vector load trigger for  r56, r57
+0x013C | vec2 15 load      | vector load trigger for  r60, r61
+-----------------------------------------------------------------------
+0x0140 | vec2 0 store      | vector store trigger for r0,  r1
+0x0144 | vec2 1 store      | vector store trigger for r4,  r5
+0x0148 | vec2 2 store      | vector store trigger for r8,  r9
+...    | ...               | ...
+0x0174 | vec2 13 store     | vector store trigger for r52, r53
+0x0188 | vec2 14 store     | vector store trigger for r56, r57
+0x017C | vec2 15 store     | vector store trigger for r60, r61
+-----------------------------------------------------------------------
+0x0180 | vec3 0 load       | vector load trigger for  r0,  r1,  r2
+0x0184 | vec3 1 load       | vector load trigger for  r4,  r5,  r6
+0x0188 | vec3 2 load       | vector load trigger for  r8,  r9,  r10
+...    | ...               | ...
+0x01B4 | vec3 13 load      | vector load trigger for  r52, r53, r54
+0x01B8 | vec3 14 load      | vector load trigger for  r56, r57, r55
+0x01BC | vec3 15 load      | vector load trigger for  r60, r61, r62
+-----------------------------------------------------------------------
+0x01C0 | vec3 0 store      | vector store trigger for r0,  r1,  r2
+0x01C4 | vec3 1 store      | vector store trigger for r4,  r5,  r6
+0x01C8 | vec3 2 store      | vector store trigger for r8,  r9,  r10
+...    | ...               | ...
+0x01F4 | vec3 13 store     | vector store trigger for r52, r53, r54
+0x01F8 | vec3 14 store     | vector store trigger for r56, r57, r58
+0x01FC | vec3 15 store     | vector store trigger for r60, r61, r62
+-----------------------------------------------------------------------
+0x0200 | vec4 0 load       | vector load trigger for  r0,  r1,  r2,  r3
+0x0204 | vec4 1 load       | vector load trigger for  r4,  r5,  r6,  r7
+0x0208 | vec4 2 load       | vector load trigger for  r8,  r9,  r10, r11
+...    | ...               | ...
+0x0234 | vec4 13 load      | vector load trigger for  r52, r53, r54, r55
+0x0238 | vec4 14 load      | vector load trigger for  r56, r57, r58, r59
+0x023C | vec4 15 load      | vector load trigger for  r60, r61, r62, r63
+-----------------------------------------------------------------------
+0x0240 | vec4 0 store      | vector store trigger for r0,  r1,  r2,  r3
+0x0244 | vec4 1 store      | vector store trigger for r4,  r5,  r6,  r7
+0x0248 | vec4 2 store      | vector store trigger for r8,  r9,  r10, r11
+...    | ...               | ...
+0x0274 | vec4 13 store     | vector store trigger for r52, r53, r54, r55
+0x0278 | vec4 14 store     | vector store trigger for r56, r57, r58, r59
+0x027C | vec4 15 store     | vector store trigger for r60, r61, r62, r63
+-----------------------------------------------------------------------
+0x3F8  | error             | error code register
+0x3FC  | command           | command register
