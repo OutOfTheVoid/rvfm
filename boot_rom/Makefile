@@ -4,7 +4,7 @@ AS = riscv32-unknown-elf-gcc
 RM = rm -rf
 MKDIR = mkdir -p
 
-LIBRVFM = ../../librvfm
+LIBRVFM = ../librvfm
 
 C_OPT = -O2
 C_FLAGS = -ffreestanding -march=rv32im -mabi=ilp32 -c $(C_OPT) -I$(LIBRVFM)/inc
@@ -14,15 +14,18 @@ LINKER_SCRIPT = $(LIBRVFM)/link/link_2core.ld
 
 all: cart.elf
 
-cart.elf: obj/main.o obj/crt0.o init
-	$(LD) -T $(LINKER_SCRIPT) -nostartfiles obj/crt0.o obj/main.o -o cart.elf
+cart.elf: obj/main.o obj/sound_main.o obj/crt0.o init
+	$(LD) -T $(LINKER_SCRIPT) -nostartfiles obj/crt0.o obj/main.o obj/sound_main.o -o boot_rom.elf
 
 obj/crt0.o: $(LIBRVFM)/src/startup/crt0_2core.s init
 	$(AS) $(LIBRVFM)/src/startup/crt0_2core.s $(AS_FLAGS) -o obj/crt0.o
 	
 obj/main.o: src/main.c init
 	$(CC) src/main.c $(C_FLAGS) -o obj/main.o
-
+	
+obj/sound_main.o: src/sound_main.c init
+	$(CC) src/sound_main.c $(C_FLAGS) -o obj/sound_main.o
+	
 clean:
 	-$(RM) obj/*
 	-$(RM) cart.elf

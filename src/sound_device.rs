@@ -91,7 +91,7 @@ impl SoundInterruptOutput {
 	}
 }
 
-const FRAME_SIZE: usize = 512;
+const FRAME_SIZE: usize = 256;
 const CHANNEL_COUNT: usize = 2;
 
 impl SoundDevice {

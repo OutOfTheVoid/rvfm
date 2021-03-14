@@ -33,7 +33,22 @@ const REG_STORE_VEC3_15: u32 = 127; // 0x1FC
 const REG_LOAD_VEC4_0: u32 = 128;   // 0x200
 const REG_LOAD_VEC4_15: u32 = 143;  // 0x23C
 const REG_STORE_VEC4_0: u32 = 144;  // 0x240
-const REG_STORE_VEC4_15: u32 = 149; // 0x27C
+const REG_STORE_VEC4_15: u32 = 159; // 0x27C
+
+const REG_LOAD_MAT2_0: u32 = 160;   // 0x280
+const REG_LOAD_MAT2_3: u32 = 163;   // 0x28C
+const REG_STORE_MAT2_0: u32 = 164;   // 0x290
+const REG_STORE_MAT2_3: u32 = 167;   // 0x29C
+
+const REG_LOAD_MAT3_0: u32 = 168;   // 0x2A0
+const REG_LOAD_MAT3_3: u32 = 171;   // 0x2AC
+const REG_STORE_MAT3_0: u32 = 172;   // 0x2B0
+const REG_STORE_MAT3_3: u32 = 175;   // 0x2BC
+
+const REG_LOAD_MAT4_0: u32 = 176;   // 0x2C0
+const REG_LOAD_MAT4_3: u32 = 179;   // 0x2CC
+const REG_STORE_MAT4_0: u32 = 180;   // 0x2D0
+const REG_STORE_MAT4_3: u32 = 183;   // 0x2DC
 
 const REG_NUM_COMMAND: u32 = 255;    // 0x3FC
 const REG_NUM_ERROR: u32 = 254;      // 0x3F8
@@ -124,7 +139,37 @@ const COMMAND_OP_R_INV_R: u32 = 0xA8;
 
 // VEC, VEC OP R => VEC
 
-const COMMAND_OP_VEC_VEC_R_QSLERP_VEC: u32 = 0xC0;
+const COMMAND_OP_VEC_VEC_R_LERP2_VEC: u32 = 0xC0;
+const COMMAND_OP_VEC_VEC_R_LERP3_VEC: u32 = 0xC1;
+const COMMAND_OP_VEC_VEC_R_LERP4_VEC: u32 = 0xC2;
+const COMMAND_OP_VEC_VEC_R_QSLERP_VEC: u32 = 0xC3;
+
+// MAT OP MAT => MAT
+
+const COMMAND_OP_MAT_MAT_MUL2_MAT: u32 = 0xD0;
+const COMMAND_OP_MAT_MAT_MUL3_MAT: u32 = 0xD1;
+const COMMAND_OP_MAT_MAT_MUL4_MAT: u32 = 0xD2;
+
+// MAT OP => MAT
+
+const COMMAND_OP_MAT_INV2_MAT: u32 = 0xE0;
+const COMMAND_OP_MAT_INV3_MAT: u32 = 0xE1;
+const COMMAND_OP_MAT_INV4_MAT: u32 = 0xE2;
+const COMMAND_OP_MAT_TRANSPOSE2_MAT: u32 = 0xE3;
+const COMMAND_OP_MAT_TRANSPOSE3_MAT: u32 = 0xE4;
+const COMMAND_OP_MAT_TRANSPOSE4_MAT: u32 = 0xE5;
+
+// MAT OP => R
+
+const COMMAND_OP_MAT_DET2_R: u32 = 0xE8;
+const COMMAND_OP_MAT_DET3_R: u32 = 0xE9;
+const COMMAND_OP_MAT_DET4_R: u32 = 0xEA;
+
+// MAT OP VEC => VEC
+
+const COMMAND_OP_MAT_VEC_MUL2_VEC: u32 = 0xF0;
+const COMMAND_OP_MAT_VEC_MUL3_VEC: u32 = 0xF1;
+const COMMAND_OP_MAT_VEC_MUL4_VEC: u32 = 0xF2;
 
 const ERROR_NONE: u32 = 0;
 
@@ -143,6 +188,30 @@ fn read_v3(from: &[f32]) -> (f32, f32, f32) {
 
 fn read_v4(from: &[f32]) -> (f32, f32, f32, f32) {
 	(from[0], from[1], from[2], from[3])
+}
+
+fn read_m2(from: &[f32]) -> ((f32, f32), (f32, f32)) {
+	(
+		(from[0], from[1]),
+		(from[4], from[5])
+	)
+}
+
+fn read_m3(from: &[f32]) -> ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32)) {
+	(
+		(from[0], from[1], from[2]),
+		(from[4], from[5], from[6]),
+		(from[8], from[9], from[10])
+	)
+}
+
+fn read_m4(from: &[f32]) -> ((f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32)) {
+	(
+		(from[0],  from[1],  from[2],  from[4]),
+		(from[4],  from[5],  from[6],  from[7]),
+		(from[8],  from[9],  from[10], from[11]),
+		(from[12], from[13], from[14], from[15]),
+	)
 }
 
 fn write_v2(to: &mut [f32], v: (f32, f32)) {
@@ -164,6 +233,60 @@ fn write_v4(to: &mut [f32], v: (f32, f32, f32, f32)) {
 	to[1] = y;
 	to[2] = z;
 	to[3] = w;
+}
+
+fn write_m2(to: &mut [f32], m: ((f32, f32), (f32, f32))) {
+	let (
+		(m_11, m_12),
+		(m_21, m_22)
+	) = m;
+	to[0] = m_11;
+	to[1] = m_12;
+	to[4] = m_21;
+	to[5] = m_22;
+}
+
+fn write_m3(to: &mut [f32], m: ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32))) {
+	let (
+		(m_11, m_12, m_13),
+		(m_21, m_22, m_23),
+		(m_31, m_32, m_33)
+	) = m;
+	to[0] = m_11;
+	to[1] = m_12;
+	to[2] = m_13;
+	to[4] = m_21;
+	to[5] = m_22;
+	to[6] = m_23;
+	to[8] = m_31;
+	to[9] = m_32;
+	to[10] = m_33;
+}
+
+fn write_m4(to: &mut [f32], m: ((f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32))) {
+	let (
+		(m_11, m_12, m_13, m_14),
+		(m_21, m_22, m_23, m_24),
+		(m_31, m_32, m_33, m_34),
+		(m_41, m_42, m_43, m_44),
+	) = m;
+	
+	to[0] = m_11;
+	to[1] = m_12;
+	to[2] = m_13;
+	to[3] = m_14;
+	to[4] = m_21;
+	to[5] = m_22;
+	to[6] = m_23;
+	to[7] = m_24;
+	to[8] = m_31;
+	to[9] = m_32;
+	to[10] = m_33;
+	to[11] = m_34;
+	to[12] = m_41;
+	to[13] = m_42;
+	to[14] = m_43;
+	to[15] = m_44;
 }
 
 fn add_v2(a: (f32, f32), b: (f32, f32)) -> (f32, f32) {
@@ -399,6 +522,106 @@ fn scale_v4(v: (f32, f32, f32, f32), scale: f32) -> (f32, f32, f32, f32) {
 	(x * scale, y * scale, z * scale, w * scale)
 }
 
+fn lerp_v2(a: (f32, f32), b: (f32, f32), t: f32) -> (f32, f32) {
+	let t_a = 1.0 - t;
+	let t_b = t;
+	add_v2(scale_v2(a, t_a), scale_v2(b, t_b))
+}
+fn lerp_v3(a: (f32, f32, f32), b: (f32, f32, f32), t: f32) -> (f32, f32, f32) {
+	let t_a = 1.0 - t;
+	let t_b = t;
+	add_v3(scale_v3(a, t_a), scale_v3(b, t_b))
+}
+
+fn lerp_v4(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32), t: f32) -> (f32, f32, f32, f32) {
+	let t_a = 1.0 - t;
+	let t_b = t;
+	add_v4(scale_v4(a, t_a), scale_v4(b, t_b))
+}
+
+fn slerp_q(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32), t: f32) -> (f32, f32, f32, f32) {
+	let cos_half_theta = dot_v4(a, b);
+	let sin_half_theta = (1.0 - cos_half_theta * cos_half_theta).sqrt();
+	let half_theta = cos_half_theta.acos();
+	if sin_half_theta.abs() < 0.001 {
+		lerp_v4(a, b, 0.5)
+	} else {
+		let t_a = ((1.0 - t) * half_theta).sin();
+		let t_b = (t * half_theta).sin();
+		add_v4(scale_v4(a, t_a), scale_v4(b, t_b))
+	}
+}
+
+fn transpose_m2(m: ((f32, f32), (f32, f32))) -> ((f32, f32), (f32, f32)) {
+	let (
+		(m_11, m_12),
+		(m_21, m_22)
+	) = m;
+	(
+		(m_11, m_21),
+		(m_12, m_22)
+	)
+}
+
+fn transpose_m3(m: ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32))) -> ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32)) {
+	let (
+		(m_11, m_12, m_13),
+		(m_21, m_22, m_23),
+		(m_31, m_32, m_33),
+	) = m;
+	(
+		(m_11, m_21, m_31),
+		(m_12, m_22, m_32),
+		(m_13, m_23, m_33),
+	)
+}
+
+
+fn transpose_m4(m: ((f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32))) -> ((f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32)) {
+	let (
+		(m_11, m_12, m_13, m_14),
+		(m_21, m_22, m_23, m_24),
+		(m_31, m_32, m_33, m_34),
+		(m_41, m_42, m_43, m_44),
+	) = m;
+	(
+		(m_11, m_21, m_31, m_41),
+		(m_12, m_22, m_32, m_42),
+		(m_13, m_23, m_33, m_43),
+		(m_14, m_24, m_34, m_44),
+	)
+}
+
+fn mul_m2(a: ((f32, f32), (f32, f32)), b: ((f32, f32), (f32, f32))) -> ((f32, f32), (f32, f32)) {
+	let (r_a1, r_a2) = a;
+	let (c_b1, c_b2) = transpose_m2(b);
+	(
+		(dot_v2(r_a1, c_b1), dot_v2(r_a1, c_b2)),
+		(dot_v2(r_a2, c_b1), dot_v2(r_a2, c_b2))
+	)
+}
+
+fn mul_m3(a: ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32)), b: ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32))) -> ((f32, f32, f32), (f32, f32, f32), (f32, f32, f32)) {
+	let (r_a1, r_a2, r_a3 ) = a;
+	let (c_b1, c_b2, c_b3) = transpose_m3(b);
+	(
+		(dot_v3(r_a1, c_b1), dot_v3(r_a1, c_b2), dot_v3(r_a1, c_b3)),
+		(dot_v3(r_a2, c_b1), dot_v3(r_a2, c_b2), dot_v3(r_a2, c_b3)),
+		(dot_v3(r_a3, c_b1), dot_v3(r_a3, c_b2), dot_v3(r_a3, c_b3)),
+	)
+}
+
+fn mul_m4(a: ((f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32)), b: ((f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32))) -> ((f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32), (f32, f32, f32, f32)) {
+	let (r_a1, r_a2, r_a3, r_a4) = a;
+	let (c_b1, c_b2, c_b3, c_b4) = transpose_m4(b);
+	(
+		(dot_v4(r_a1, c_b1), dot_v4(r_a1, c_b2), dot_v4(r_a1, c_b3), dot_v4(r_a1, c_b4)),
+		(dot_v4(r_a2, c_b1), dot_v4(r_a2, c_b2), dot_v4(r_a2, c_b3), dot_v4(r_a2, c_b4)),
+		(dot_v4(r_a3, c_b1), dot_v4(r_a3, c_b2), dot_v4(r_a3, c_b3), dot_v4(r_a3, c_b4)),
+		(dot_v4(r_a4, c_b1), dot_v4(r_a4, c_b2), dot_v4(r_a4, c_b3), dot_v4(r_a4, c_b4)),
+	)
+}
+
 impl MathAcceleratorData {
 	pub fn new() -> Self {
 		Self {
@@ -537,6 +760,108 @@ impl MathAcceleratorData {
 				}
 				MemWriteResult::Ok
 			},
+			REG_LOAD_MAT2_0 ..= REG_LOAD_MAT2_3 => {
+				let reg_start = (reg_num - REG_LOAD_MAT2_0) << 4;
+				let address = data;
+				for y in 0 .. 2 {
+					for x in 0 .. 2 {
+						let component_address = address + (x << 2) + (y << 3);
+						match mio.write_32(component_address, self.regs[(reg_start + x + (y << 2)) as usize].to_bits()) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.error = ERROR_VECSTORE_MEMORY_ERROR;
+								return MemWriteResult::PeripheralError;
+							}
+						}
+					}
+				}
+				MemWriteResult::Ok
+			},
+			REG_STORE_MAT2_0 ..= REG_STORE_MAT2_3 => {
+				let reg_start = (reg_num - REG_STORE_MAT2_0) << 4;
+				let address = data;
+				for y in 0 .. 2 {
+					for x in 0 .. 2 {
+						let component_address = address + (x << 2) + (y << 3);
+						match mio.write_32(component_address, self.regs[(reg_start + x + (y << 2)) as usize].to_bits()) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.error = ERROR_VECSTORE_MEMORY_ERROR;
+								return MemWriteResult::PeripheralError;
+							}
+						}
+					}
+				}
+				MemWriteResult::Ok
+			},
+			REG_LOAD_MAT3_0 ..= REG_LOAD_MAT3_3 => {
+				let reg_start = (reg_num - REG_LOAD_MAT2_0) << 4;
+				let address = data;
+				for y in 0 .. 3 {
+					for x in 0 .. 3 {
+						let component_address = address + (x << 2) + (y * 12);
+						match mio.write_32(component_address, self.regs[(reg_start + x + (y << 2)) as usize].to_bits()) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.error = ERROR_VECSTORE_MEMORY_ERROR;
+								return MemWriteResult::PeripheralError;
+							}
+						}
+					}
+				}
+				MemWriteResult::Ok
+			},
+			REG_STORE_MAT3_0 ..= REG_STORE_MAT3_3 => {
+				let reg_start = (reg_num - REG_STORE_MAT2_0) << 4;
+				let address = data;
+				for y in 0 .. 3 {
+					for x in 0 .. 3 {
+						let component_address = address + (x << 2) + (y * 12);
+						match mio.write_32(component_address, self.regs[(reg_start + x + (y << 2)) as usize].to_bits()) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.error = ERROR_VECSTORE_MEMORY_ERROR;
+								return MemWriteResult::PeripheralError;
+							}
+						}
+					}
+				}
+				MemWriteResult::Ok
+			},
+			REG_LOAD_MAT4_0 ..= REG_LOAD_MAT4_3 => {
+				let reg_start = (reg_num - REG_LOAD_MAT2_0) << 4;
+				let address = data;
+				for y in 0 .. 4 {
+					for x in 0 .. 4 {
+						let component_address = address + (x << 2) + (y << 4);
+						match mio.write_32(component_address, self.regs[(reg_start + x + (y << 2)) as usize].to_bits()) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.error = ERROR_VECSTORE_MEMORY_ERROR;
+								return MemWriteResult::PeripheralError;
+							}
+						}
+					}
+				}
+				MemWriteResult::Ok
+			},
+			REG_STORE_MAT4_0 ..= REG_STORE_MAT4_3 => {
+				let reg_start = (reg_num - REG_STORE_MAT2_0) << 4;
+				let address = data;
+				for y in 0 .. 4 {
+					for x in 0 .. 4 {
+						let component_address = address + (x << 2) + (y << 4);
+						match mio.write_32(component_address, self.regs[(reg_start + x + (y << 2)) as usize].to_bits()) {
+							MemWriteResult::Ok => {},
+							_ => {
+								self.error = ERROR_VECSTORE_MEMORY_ERROR;
+								return MemWriteResult::PeripheralError;
+							}
+						}
+					}
+				}
+				MemWriteResult::Ok
+			},
 			_ => {
 				self.error = ERROR_UNKNOWN_REG;
 				MemWriteResult::PeripheralError
@@ -630,6 +955,23 @@ impl MathAcceleratorData {
 		}
 	}
 	
+	fn vec_vec_r_vec_refs(&mut self, command: u32) -> (&'static mut [f32], &'static mut [f32], &'static mut f32, &'static mut [f32]) {
+		let (src_a_index, src_b_index, src_r_index, dest_index) = (
+			(command >> 8) & 0x0F,
+			(command >> 12) & 0x0F,
+			(command >> 16) & 0x3F,
+			(command >> 22) & 0x0F
+		);
+		unsafe {
+			(
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(src_a_index << 2) as usize] as *mut f32, 4),
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(src_b_index << 2) as usize] as *mut f32, 4),
+				&mut *(&mut self.regs[src_r_index as usize] as *mut f32),
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(dest_index << 2) as usize] as *mut f32, 4),
+			)
+		}
+	}
+	
 	fn vec_vec_refs(&mut self, command: u32) -> (&'static mut [f32], &'static mut [f32]) {
 		let (src_index, dest_index) = (
 			(command >> 8) & 0x0F,
@@ -639,6 +981,34 @@ impl MathAcceleratorData {
 			(
 				slice::from_raw_parts_mut::<'static>(&mut self.regs[(src_index << 2) as usize] as *mut f32, 4),
 				slice::from_raw_parts_mut::<'static>(&mut self.regs[(dest_index << 2) as usize] as *mut f32, 4),
+			)
+		}
+	}
+	
+	fn mat_mat_refs(&mut self, command: u32) -> (&'static mut [f32], &'static mut [f32]) {
+		let (src_index, dest_index) = (
+			(command >> 8) & 0x03,
+			(command >> 10) & 0x03
+		);
+		unsafe {
+			(
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(src_index << 4) as usize] as *mut f32, 16),
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(dest_index << 4) as usize] as *mut f32, 16),
+			)
+		}
+	}
+	
+	fn mat_mat_mat_refs(&mut self, command: u32) -> (&'static mut [f32], &'static mut [f32], &'static mut [f32]) {
+		let (src_a_index, src_b_index, dest_index) = (
+			(command >> 8) & 0x03,
+			(command >> 10) & 0x03,
+			(command >> 12) & 0x03
+		);
+		unsafe {
+			(
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(src_a_index << 4) as usize] as *mut f32, 16),
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(src_b_index << 4) as usize] as *mut f32, 16),
+				slice::from_raw_parts_mut::<'static>(&mut self.regs[(dest_index << 4) as usize] as *mut f32, 16),
 			)
 		}
 	}
@@ -1045,6 +1415,62 @@ impl MathAcceleratorData {
 				let (src, dest) = self.r_r_refs(command);
 				let result = src.exp();
 				*dest = result;
+				true
+			},
+			COMMAND_OP_VEC_VEC_R_LERP2_VEC => {
+				let (src_v_a, src_v_b, src_r, dest) = self.vec_vec_r_vec_refs(command);
+				let v_a = read_v2(src_v_a);
+				let v_b = read_v2(src_v_b);
+				let result = lerp_v2(v_a, v_b, *src_r);
+				write_v2(dest, result);
+				true
+			},
+			COMMAND_OP_VEC_VEC_R_LERP3_VEC => {
+				let (src_v_a, src_v_b, src_r, dest) = self.vec_vec_r_vec_refs(command);
+				let v_a = read_v3(src_v_a);
+				let v_b = read_v3(src_v_b);
+				let result = lerp_v3(v_a, v_b, *src_r);
+				write_v3(dest, result);
+				true
+			},
+			COMMAND_OP_VEC_VEC_R_LERP4_VEC => {
+				let (src_v_a, src_v_b, src_r, dest) = self.vec_vec_r_vec_refs(command);
+				let v_a = read_v4(src_v_a);
+				let v_b = read_v4(src_v_b);
+				let result = lerp_v4(v_a, v_b, *src_r);
+				write_v4(dest, result);
+				true
+			},
+			COMMAND_OP_VEC_VEC_R_QSLERP_VEC => {
+				let (src_v_a, src_v_b, src_r, dest) = self.vec_vec_r_vec_refs(command);
+				let v_a = read_v4(src_v_a);
+				let v_b = read_v4(src_v_b);
+				let result = slerp_q(v_a, v_b, *src_r);
+				write_v4(dest, result);
+				true
+			},
+			COMMAND_OP_MAT_MAT_MUL2_MAT => {
+				let (src_a, src_b, dest) = self.mat_mat_mat_refs(command);
+				let m_a = read_m2(src_a);
+				let m_b = read_m2(src_b);
+				let result = mul_m2(m_a, m_b);
+				write_m2(dest, result);
+				true
+			},
+			COMMAND_OP_MAT_MAT_MUL3_MAT => {
+				let (src_a, src_b, dest) = self.mat_mat_mat_refs(command);
+				let m_a = read_m3(src_a);
+				let m_b = read_m3(src_b);
+				let result = mul_m3(m_a, m_b);
+				write_m3(dest, result);
+				true
+			},
+			COMMAND_OP_MAT_MAT_MUL4_MAT => {
+				let (src_a, src_b, dest) = self.mat_mat_mat_refs(command);
+				let m_a = read_m4(src_a);
+				let m_b = read_m4(src_b);
+				let result = mul_m4(m_a, m_b);
+				write_m4(dest, result);
 				true
 			},
 			_ => {

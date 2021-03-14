@@ -1,7 +1,9 @@
 #ifndef RVFM_DSPDMA_H
 #define RVFM_DSPDMA_H
 
-#include <stdint.h>
+#include "common.h"
+
+C_START
 
 #define DSPDMA_TYPE *((volatile uint32_t *) 0xF0020000)
 #define DSPDMA_INDEX *((volatile uint32_t *) 0xF0020004)
@@ -290,5 +292,7 @@ inline static int dspdma_run(uint32_t transfer_size) {
 	DSPDMA_COMMAND = DSPDMA_COMMAND_TRIGGER;
 	return DSPDMA_ERROR;
 }
+
+C_END
 
 #endif

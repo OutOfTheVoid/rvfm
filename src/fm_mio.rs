@@ -5,7 +5,7 @@ use atomic_counter::{AtomicCounter, ConsistentCounter};
 
 use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, mtimer::{MTimerPeripheral}, sound_device::SoundDevice, math_accel::MathAccelerator};
+use crate::{cart_loader::CartLoaderPeripheral, cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, math_accel::MathAccelerator, mtimer::{MTimerPeripheral}, sound_device::SoundDevice};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
@@ -111,6 +111,7 @@ pub struct FmMemoryIO {
 	hart_id: u32,
 	mtimers: Arc<[Arc<MTimerPeripheral>]>,
 	math_accelerators: Arc<[Arc<MathAccelerator>]>,
+	cart_loader_device: Arc<OnceCell<CartLoaderPeripheral>>
 }
 
 unsafe impl Send for FmMemoryIO {
@@ -157,7 +158,8 @@ impl Clone for FmMemoryIO {
 			interface_id: self.id_counter.inc() as u32,
 			hart_id: self.hart_id,
 			mtimers: self.mtimers.clone(),
-			math_accelerators: self.math_accelerators.clone()
+			math_accelerators: self.math_accelerators.clone(),
+			cart_loader_device: self.cart_loader_device.clone(),
 		}
 	}
 }
@@ -192,7 +194,8 @@ impl FmMemoryIO {
 			interface_id: 0,
 			hart_id: 0xFFFF_FFFF,
 			mtimers: mtimers.into(),
-			math_accelerators: math_accelerators.into()
+			math_accelerators: math_accelerators.into(),
+			cart_loader_device: Arc::new(OnceCell::default()),
 		}
 	}
 	
@@ -385,6 +388,10 @@ impl FmMemoryIO {
 	
 	pub fn set_sound_device(&mut self, sound_device: SoundDevice) {
 		self.sound_device.set(sound_device).unwrap();
+	}
+	
+	pub fn set_cart_loader(&mut self, loader_peripheral: CartLoaderPeripheral) {
+		self.cart_loader_device.set(loader_peripheral);
 	}
 }
 

@@ -1,69 +1,24 @@
 #include <stdint.h>
-#include "interrupts.h"
+#include <interrupt.h>
+#include <debug_print.h>
+#include <core2.h>
+#include <sound.h>
 
-#define DEBUG_IO_MSG_ADDRESS *((volatile uint32_t *)0xF0000000)
-#define DEBUG_IO_MSG_LENGTH *((volatile uint32_t *)0xF0000004)
-#define DEBUG_IO_WRITE *((volatile uint32_t *)0xF0000008)
-
-int32_t str_len(const char * string) {
-	int32_t count = 0;
-	while (string[count] != '\0') {
-		count ++;
-	}
-	return count;
-}
-
-void debug_print_msg(const char * message, uint32_t length) {
-	DEBUG_IO_MSG_ADDRESS = (uint32_t) message;
-	DEBUG_IO_MSG_LENGTH = length;
-	DEBUG_IO_WRITE = 0;
-}
-
-void debug_print_u32(uint32_t value) {
-	DEBUG_IO_MSG_LENGTH = value;
-	DEBUG_IO_WRITE = 1;
-}
-
-#define CORE2_CONTROLLER_START_ADDRESS *((volatile uint32_t *) 0xF0040000)
-#define CORE2_CONTROLLER_RUN *((volatile uint32_t *) 0xF0040004)
-#define CORE2_CONTROLLER_STATUS *((volatile uint32_t *) 0xF0040008)
-
-extern void core2_start();
-
-#define SOUND_BASE 0xF0050000
-#define SOUND_ENABLE *((volatile uint32_t *) (SOUND_BASE | 0x0000))
-#define SOUND_FRAME_COUNT *((volatile uint32_t *) (SOUND_BASE | 0x0004))
-#define SOUND_INTERRUPT_ENABLE *((volatile uint32_t *) (SOUND_BASE | 0x0008))
-#define SOUND_FRAME_PTR *((volatile uint32_t *) (SOUND_BASE | 0x000C))
-#define SOUND_TRIGGER_COPY *((volatile uint32_t *) (SOUND_BASE | 0x0010))
-
-#define SOUND_INTERRUPT_STATE *((volatile uint32_t *) 0xF0030004)
-
-volatile int sound_frame = 0;
+volatile int sound_interrupt_waiting = 0;
 
 void ATTR_INTERRUPT interrupt_handler() {
-	if (SOUND_INTERRUPT_STATE != 0) {
-		sound_frame = SOUND_FRAME_COUNT;
-		SOUND_INTERRUPT_STATE = 0;
+	if (sound_interrupt_state()) {
+		sound_interrupt_waiting = 0;
+		sound_interrupt_ack();
 	}
 	clear_pending_interrupts();
 }
 
-int get_sound_frame() {
-	disable_interrupts();
-	int frame = sound_frame;
-	enable_interrupts();
-	return frame;
-}
-
 void sound_interrupt_wait() {
-	static int last_frame = 0;
-	int current_frame = get_sound_frame();
-	while(current_frame == last_frame) {
+	sound_interrupt_waiting = 1;
+	while(sound_interrupt_waiting) {
 		wfi();
-		current_frame = get_sound_frame();
 	}
-	last_frame = current_frame;
 }
 
 void init_sound_interrupt() {
@@ -72,13 +27,15 @@ void init_sound_interrupt() {
 	clear_pending_interrupts();
 	enable_interrupts();
 	enable_external_interrupts();
-	SOUND_INTERRUPT_ENABLE = 1;
+	sound_interrupt_enable();
 }
 
 void main() {
-	CORE2_CONTROLLER_START_ADDRESS = (uint32_t) &core2_start;
-	CORE2_CONTROLLER_RUN = 1;
-	wfi();
+	start_core2();
+	while(1) {
+		wfi();
+		debug_print_msg("core1 wfi passed", 16);
+	}
 }
 
 #define SAMPLE_RATE 48000
@@ -106,19 +63,17 @@ void core2_main() {
 	int phase_2 = 0;
 	int phase_3 = 0;
 	
-	int16_t buffer[1024];
-	for (int i = 0; i < 1024; i ++) {
+	int16_t buffer[SOUND_FRAME_SIZE * SOUND_CHANNEL_COUNT];
+	for (int i = 0; i < SOUND_FRAME_SIZE * SOUND_CHANNEL_COUNT; i ++) {
 		buffer[i] = 0;
 	}
-	SOUND_FRAME_PTR = (uint32_t) buffer;
 	
 	init_sound_interrupt();
-	SOUND_ENABLE = 1;
+	sound_enable();
 	while (1) {
-		
-		SOUND_TRIGGER_COPY = 1;
-		
-		for (int i = 0; i < 512; i ++) {
+		sound_interrupt_wait();
+		sound_frame_submit(buffer);
+		for (int i = 0; i < SOUND_FRAME_SIZE; i ++) {
 			int s = 
 				get_triangle_wave(& phase_1, 262) + // C4
 				get_triangle_wave(& phase_2, 330) + // E4
@@ -126,8 +81,6 @@ void core2_main() {
 			buffer[i * 2] = s;
 			buffer[i * 2 + 1] = s;
 		}
-		
-		sound_interrupt_wait();
 	}
 	disable_interrupts();
 	clear_pending_interrupts();

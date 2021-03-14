@@ -1,16 +1,20 @@
 use rv_vsys::{InterruptBus, MemReadResult, MemWriteResult};
-use std::sync::Arc;
+use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}};
 use crate::gpu::GpuInterruptOutput;
 use crate::sound_device::SoundInterruptOutput;
 use once_cell::sync::OnceCell;
 
 const OFFSET_VSYNC_INTERRUPT: u32 = 0;
 const OFFSET_SOUND_INTERRUPT: u32 = 4;
+const OFFSET_CPU0_IPI: u32 = 8;
+const OFFSET_CPU1_IPI: u32 = 12;
 
 #[derive(Clone)]
 pub struct FmInterruptBus {
 	gpu_interrupts: Arc<OnceCell<GpuInterruptOutput>>,
 	sound_interrupt: Arc<OnceCell<SoundInterruptOutput>>,
+	cpu0_ipi: Arc<AtomicBool>,
+	cpu1_ipi: Arc<AtomicBool>,
 }
 
 impl FmInterruptBus {
@@ -18,6 +22,8 @@ impl FmInterruptBus {
 		Self {
 			gpu_interrupts: Arc::new(OnceCell::default()),
 			sound_interrupt: Arc::new(OnceCell::default()),
+			cpu0_ipi: Arc::new(AtomicBool::new(false)),
+			cpu1_ipi: Arc::new(AtomicBool::new(false)),
 		}
 	}
 	
@@ -43,6 +49,14 @@ impl FmInterruptBus {
 				}
 				MemWriteResult::Ok
 			},
+			OFFSET_CPU0_IPI => {
+				self.cpu0_ipi.store(val != 0, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
+			OFFSET_CPU1_IPI => {
+				self.cpu1_ipi.store(val != 0, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
 			_ => MemWriteResult::PeripheralError
 		}
 	}
@@ -66,7 +80,25 @@ impl FmInterruptBus {
 						 0
 					 }
 				)
-			}
+			},
+			OFFSET_CPU0_IPI => {
+				MemReadResult::Ok(
+					if self.cpu0_ipi.load(Ordering::SeqCst) {
+						1
+					} else {
+						0
+					}
+				)
+			},
+			OFFSET_CPU1_IPI => {
+				MemReadResult::Ok(
+					if self.cpu0_ipi.load(Ordering::SeqCst) {
+						1
+					} else {
+						0
+					}
+				)
+			},
 			_ => MemReadResult::PeripheralError
 		}
 	}
@@ -79,11 +111,11 @@ impl InterruptBus for FmInterruptBus {
 	fn poll_interrupts(&mut self, hart_id: u32) -> bool {
 		match hart_id {
 			0 => {
-				self.gpu_interrupts.get().unwrap().clone().poll_sync_interrupt()
+				self.gpu_interrupts.get().unwrap().clone().poll_sync_interrupt()// || self.cpu0_ipi.load(Ordering::SeqCst)
 			},
 			1 => {
-				self.sound_interrupt.get().unwrap().clone().poll_audio_interrupt()
-			}
+				self.sound_interrupt.get().unwrap().clone().poll_audio_interrupt()// || self.cpu1_ipi.load(Ordering::SeqCst)
+			},
 			_ => false
 		}
 	}

@@ -1,5 +1,7 @@
 .extern _stack_top
 .extern main
+.extern _stack2_top
+.extern core2_main
 
 .equ CSR_PANIC, 0xBFF
 
@@ -27,7 +29,21 @@ _start:
 .section .text
 panic:
 	csrrw zero, CSR_PANIC, zero
-
+	
+.global _core2_start
+_core2_start:
+	.cfi_startproc
+	.cfi_undefined ra
+	.option push
+	.option norelax
+	la gp, __global_pointer$
+	.option pop
+	la sp, _stack2_top
+	mv s0, sp
+	call core2_main
+	j panic
+	.cfi_endproc
+	
 .section .rodata
 init_msg:
 	.ascii "RVFM cart running..."

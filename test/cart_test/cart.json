@@ -1,0 +1,13 @@
+{
+	"name": "cart_test",
+	"version": "0.1.0",
+	"developer": "Liam Taylor",
+	"developer_url": "https://github.com/OutOfTheVoid",
+	"source": "https://github.com/OutOfTheVoid/rvfm",
+	"binary": "cart.elf",
+	"data": {
+		"format": "fs-ro",
+		"root_dir": "data"
+	},
+	"icon": ""
+}

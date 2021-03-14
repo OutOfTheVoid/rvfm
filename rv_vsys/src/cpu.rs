@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use crate::{AtomicFunct7, AtomicSizeFunct3, BranchFunct3, FCvtType, FMvXWClassFunct3, FpCmpFunct3, FpFunct7, FpMinMaxFunct3, FpRm, FpSignFunct3, InterruptBus, LoadFpFunct3, LoadFunct3, MTimer, MemIO, MemReadResult, MemWriteResult, Op, OpFunct3Funct7, OpImmFunct3, Opcode, StoreFpFunct3, StoreFunct3, SystemFunct3, SystemIntFunct7};
-use std::{time::{Duration, Instant}, sync::Arc};
+use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 use num::Signed;
 use parking_lot::{Condvar, Mutex};
 
@@ -175,7 +175,9 @@ pub struct Cpu <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus> {
 	fcsr: u32,
 	lr_write_cycle: usize,
 	lr_write_key: u32,
-	timer: Arc<Timer>
+	timer: Arc<Timer>,
+	live: Arc<AtomicBool>,
+	kill_handle: CpuKillHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -206,10 +208,59 @@ impl CpuWakeupHandle {
 	}
 }
 
+#[derive(Debug, Clone)]
+pub struct CpuKillHandle {
+	pending_cond: Arc<Condvar>,
+	pending_lock: Arc<Mutex<()>>,
+	cpu_kill_requested: Arc<AtomicBool>,
+	cpu_live_state: Arc<AtomicBool>
+}
+
+impl CpuKillHandle {
+	pub fn new(cpu_live_state: Arc<AtomicBool>) -> Self {
+		CpuKillHandle {
+			pending_cond: Arc::new(Condvar::new()),
+			pending_lock: Arc::new(Mutex::new(())),
+			cpu_kill_requested: Arc::new(AtomicBool::new(false)),
+			cpu_live_state
+		}
+	}
+	
+	pub fn kill(&mut self) {
+		let mut gaurd = self.pending_lock.lock();
+		self.cpu_kill_requested.store(true, Ordering::SeqCst);
+		while self.is_live() {
+			self.pending_cond.wait(&mut gaurd);
+		}
+		self.cpu_kill_requested.store(false, Ordering::SeqCst);
+	}
+	
+	pub fn is_live(&self) -> bool {
+		self.cpu_live_state.load(Ordering::SeqCst)
+	}
+	
+	pub fn is_kill_requested(&self) -> bool {
+		return self.cpu_kill_requested.load(Ordering::SeqCst);
+	}
+	
+	pub fn cpu_broadcast_dead(&mut self) {
+		let _lock_gaurd = self.pending_lock.lock();
+		self.cpu_live_state.store(false, Ordering::SeqCst);
+		self.cpu_kill_requested.store(false, Ordering::SeqCst);
+		self.pending_cond.notify_all();
+	}
+	
+	pub fn cpu_set_live(&mut self) {
+		let _lock_gaurd = self.pending_lock.lock();
+		self.cpu_live_state.store(true, Ordering::SeqCst);
+	}
+}
+
 impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, IntBus> {
 	pub fn new(mut mio: MIO, int_bus: IntBus, wakeup_handle: CpuWakeupHandle, id: u32) -> Self {
 		mio.set_hart_id(id);
 		let timer = mio.get_mtimer(id).unwrap();
+		let live = Arc::new(AtomicBool::new(false));
 		Cpu {
 			xr: [0; 31],
 			fr: [0f32; 32],
@@ -228,6 +279,8 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 			lr_write_cycle: 0,
 			lr_write_key: 0xFFFF_FFFF,
 			timer,
+			live: live.clone(),
+			kill_handle: CpuKillHandle::new(live)
 		}
 	}
 
@@ -247,6 +300,10 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 		self.lr_write_key = 0xFFFF_FFFF;
 	}
 	
+	pub fn get_kill_handle(&self) -> CpuKillHandle {
+		self.kill_handle.clone()
+	}
+	
 	pub fn check_timer(&mut self) {
 		if self.timer.check_timer() {
 			self.trap_csrs.mip |= MIP_MTIP;
@@ -256,6 +313,7 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 	}
 	
 	pub fn run_loop(&mut self, inst_per_period: u32, period_length: Duration) {
+		self.kill_handle.cpu_set_live();
 		let mut loop_t = Instant::now();
 		loop {
 			self.check_timer();
@@ -273,6 +331,10 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 				}
 			}
 			self.step_break();
+			if self.kill_handle.is_kill_requested() {
+				self.kill_handle.cpu_broadcast_dead();
+				return;
+			}
 			let current_t = Instant::now();
 			let period_time_elapsed = current_t - loop_t;
 			if period_time_elapsed < period_length {

@@ -12,6 +12,7 @@ mod cpu1_controller;
 mod sound_device;
 mod mtimer;
 mod math_accel;
+mod cart_loader;
 
 use application_gui::ApplicationGUI;
 
