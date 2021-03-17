@@ -391,7 +391,7 @@ impl FmMemoryIO {
 	}
 	
 	pub fn set_cart_loader(&mut self, loader_peripheral: CartLoaderPeripheral) {
-		self.cart_loader_device.set(loader_peripheral);
+		self.cart_loader_device.set(loader_peripheral).unwrap();
 	}
 }
 
@@ -499,7 +499,11 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 						} else {
 							MemReadResult::ErrUnmapped
 						}
-					}
+					},
+					8 => {
+						let device = self.cart_loader_device.clone();
+						device.get().unwrap().read_32(peripheral_offset)
+					},
 					_ => {
 						MemReadResult::ErrUnmapped
 					}
@@ -632,7 +636,11 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 						} else {
 							MemWriteResult::ErrUnmapped
 						}
-					}
+					},
+					8 => {
+						let device = self.cart_loader_device.clone();
+						device.get().unwrap().write_32(peripheral_offset, value)
+					},
 					_ => {
 						MemWriteResult::ErrUnmapped
 					}

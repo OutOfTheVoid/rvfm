@@ -1,8 +1,9 @@
 use std::{io, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}}};
+use bytemuck::offset_of;
 use json::JsonValue;
 use parking_lot::{Condvar, Mutex};
 use regex::Regex;
-use rv_vsys::{Cpu, CpuKillHandle, MemIO};
+use rv_vsys::{Cpu, CpuKillHandle, MemIO, MemReadResult, MemWriteResult};
 use std::sync::mpsc;
 
 use crate::{fm_mio::FmMemoryIO, fm_interrupt_bus::FmInterruptBus, mtimer::MTimerPeripheral};
@@ -47,6 +48,7 @@ impl CartLoaderCpuBarrier {
 	}
 }
 
+#[derive(Clone, Debug)]
 enum CartLoaderCmd {
 	EnumerateCarts(u32),
 	ReadCartMetadata{index: u32, data_write_addr: u32},
@@ -65,9 +67,9 @@ pub struct CartLoader {
 	cart_count: Arc<AtomicU32>,
 }
 
-const ENUMERATE_RESULT_NONE: u32 = 0;
-const ENUMERATE_RESULT_OK: u32 = 1;
-const ENUMERATE_RESULT_ERROR_READING_DIR: u32 = 1;
+const COMPLETION_RESULT_NONE: u32 = 0;
+const COMPLETION_RESULT_OK: u32 = 1;
+const COMPLETION_RESULT_ERROR_READING_DIR: u32 = 1;
 
 impl CartLoader {
 	pub fn start(mut mio: FmMemoryIO, cpu0: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>, cpu1: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>) -> CartLoaderCpuBarrier {
@@ -75,7 +77,11 @@ impl CartLoader {
 		let cart_count = Arc::new(AtomicU32::new(0));
 		let peripheral = CartLoaderPeripheral {
 			cmd_tx,
-			cart_count: cart_count.clone()
+			cart_count: cart_count.clone(),
+			param0: Arc::new(AtomicU32::new(0)),
+			param1: Arc::new(AtomicU32::new(0)),
+			param2: Arc::new(AtomicU32::new(0)),
+			param3: Arc::new(AtomicU32::new(0)),
 		};
 		mio.set_cart_loader(peripheral);
 		let loader = Self {
@@ -109,6 +115,7 @@ impl CartLoader {
 	fn load_cart(&mut self, cart_index: u32, error_write_addr: u32) {
 		if cart_index >= self.carts.len() as u32 {
 			self.mio.write_32(error_write_addr, 1); // ignore memory failure. this is how we signal an error
+			self.mio.access_break();
 		} else {
 			let cart = &self.carts[cart_index as usize];
 			{
@@ -130,6 +137,8 @@ impl CartLoader {
 	}
 	
 	fn enumerate_carts(&mut self, completion_signal_addr: u32) {
+		self.mio.write_32(completion_signal_addr, COMPLETION_RESULT_NONE);
+		self.mio.access_break();
 		let cart_paths = match std::fs::read_dir(self.library_dir.as_path()) {
 			Ok(x) => {
 				x.filter_map(|entry| {
@@ -142,7 +151,8 @@ impl CartLoader {
 				})
 			},
 			Err(..) => {
-				self.mio.write_32(completion_signal_addr, ENUMERATE_RESULT_ERROR_READING_DIR);
+				self.mio.write_32(completion_signal_addr, COMPLETION_RESULT_ERROR_READING_DIR);
+				self.mio.access_break();
 				return;
 			}
 		};
@@ -230,6 +240,7 @@ impl CartLoader {
 														}
 													}
 												} else {
+													println!("CartLoader warning: Cart at {} does not define a root_dir field!", cart_path_str);
 													CartData::None
 												}
 											},
@@ -249,6 +260,7 @@ impl CartLoader {
 														}
 													}
 												} else {
+													println!("CartLoader warning: Cart at {} does not define a data_file field!", cart_path_str);
 													CartData::None
 												}
 											},
@@ -268,10 +280,12 @@ impl CartLoader {
 														}
 													}
 												} else {
+													println!("CartLoader warning: Cart at {} does not define a data_file field!", cart_path_str);
 													CartData::None
 												}
 											},
 											other => {
+												println!("CartLoader warning: Cart at {} data format unknown: {}!", cart_path_str, other);
 												CartData::None
 											}
 										}
@@ -298,12 +312,14 @@ impl CartLoader {
 							}
 						},
 						_ => {
-							
+							println!("CartLoader warning: Cart at {} has invalid file format.", cart_path_str);
 						}
 					}
 				}
 			}
 		}
+		self.mio.write_32(completion_signal_addr, COMPLETION_RESULT_OK);
+		self.mio.access_break();
 	}
 	
 	fn read_cart_metadata(&mut self, index: u32, data_write_addr: u32) {
@@ -340,7 +356,94 @@ impl CartLoader {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub struct CartLoaderPeripheral {
 	cmd_tx: mpsc::Sender<CartLoaderCmd>,
 	cart_count: Arc<AtomicU32>,
+	param0: Arc<AtomicU32>,
+	param1: Arc<AtomicU32>,
+	param2: Arc<AtomicU32>,
+	param3: Arc<AtomicU32>,
 }
+
+const REG_COMMAND: u32 = 0;
+const REG_PARAM0: u32 = 4;
+const REG_PARAM1: u32 = 8;
+const REG_PARAM2: u32 = 12;
+const REG_PARAM3: u32 = 16;
+const REG_CART_COUNT: u32 = 20;
+
+const COMMAND_ENUMERATE_CARTS: u32 = 0;
+const COMMAND_READ_CART_METADATA: u32 = 1;
+const COMMAND_LOAD_CART: u32 = 2;
+
+impl CartLoaderPeripheral {
+	pub fn write_32(&self, offset: u32, value: u32) -> MemWriteResult {
+		if (offset & 0x03) != 0 {
+			return MemWriteResult::ErrAlignment;
+		}
+		match offset {
+			REG_COMMAND => {
+				if self.command(value) {
+					MemWriteResult::Ok
+				} else {
+					MemWriteResult::PeripheralError
+				}
+			},
+			REG_PARAM0 => {
+				self.param0.store(value, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
+			REG_PARAM1 => {
+				self.param1.store(value, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
+			REG_PARAM2 => {
+				self.param2.store(value, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
+			REG_PARAM3 => {
+				self.param3.store(value, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
+			_ => {
+				MemWriteResult::PeripheralError
+			}
+		}
+	}
+	
+	fn command(&self, command: u32) -> bool {
+		match command {
+			COMMAND_ENUMERATE_CARTS => {
+				let completion_addr = self.param0.load(Ordering::SeqCst);
+				self.cmd_tx.send(CartLoaderCmd::EnumerateCarts(completion_addr)).unwrap();
+				true
+			},
+			COMMAND_LOAD_CART => {
+				let index: u32 = self.param0.load(Ordering::SeqCst);
+				let error_write_addr: u32 = self.param1.load(Ordering::SeqCst);
+				self.cmd_tx.send(CartLoaderCmd::LoadCart {
+					index,
+					error_write_addr
+				}).unwrap();
+				true
+			},
+			_ => false,
+		}
+	}
+	
+	pub fn read_32(&self, offset: u32) -> MemReadResult<u32> {
+		if (offset & 0x03) != 0 {
+			return MemReadResult::ErrAlignment;
+		}
+		match offset {
+			REG_CART_COUNT => {
+				MemReadResult::Ok(self.cart_count.load(Ordering::SeqCst))
+			},
+			_ => MemReadResult::Ok(0)
+		}
+	}
+}
+
+unsafe impl Send for CartLoaderPeripheral {}
+unsafe impl Sync for CartLoaderPeripheral {}

@@ -13,7 +13,8 @@ static inline void wfi() {
 
 static inline bool get_interrupt_state() {
 	int32_t mstatus;
-	__asm__ volatile("csrr mstatus, %0" : "=r"(mstatus) :: "memory");
+	__asm__ volatile(
+		"csrr %0, mstatus" : "=r"(mstatus) :: "memory");
 	return (mstatus & 0x08) != 0;
 }
 

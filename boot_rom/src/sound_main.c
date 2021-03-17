@@ -7,7 +7,7 @@
 
 volatile int sound_interrupt_waiting = 0;
 
-void ATTR_INTERRUPT interrupt_handler() {
+void ATTR_INTERRUPT core2_interrupt_handler() {
 	if (sound_interrupt_state()) {
 		sound_interrupt_waiting = 0;
 		sound_interrupt_ack();
@@ -23,7 +23,7 @@ void sound_interrupt_wait() {
 }
 
 void init_core2_interrupts() {
-	set_interrupt_handler(interrupt_handler);
+	set_interrupt_handler(&core2_interrupt_handler);
 	enable_external_interrupts();
 	sound_interrupt_enable();
 	clear_pending_interrupts();
