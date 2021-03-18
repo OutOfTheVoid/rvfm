@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}, mpsc}};
+use std::{borrow::BorrowMut, sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering}, mpsc}};
 use std::thread;
 
 use parking_lot::Mutex;
@@ -17,6 +17,7 @@ pub struct Gpu {
 	mode: Mode,
 	cmd_queue: mpsc::Receiver<Command>,
 	raw_fb_renderer: Option<RawFBRenderer>,
+	raw_fb_base_addr: Arc<AtomicU32>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -28,6 +29,7 @@ pub enum Mode {
 pub enum Command {
 	SetMode(Mode),
 	PresentMMFB,
+	SetMMFBBase(u32)
 }
 
 pub const GPU_OUTPUT_W: u32 = 256;
@@ -222,6 +224,7 @@ impl Gpu {
 		let present_renderer = FramebufferPresentRenderer::new(&*device, &swap_desc).unwrap();
 		let present_chain = GpuPresentChain::new();
 		int_bus.set_gpu_interrupts(interrupt_output);
+		let raw_fb_base_addr = Arc::new(AtomicU32::new(0x0200_0000));
 		(Gpu {
 			device: device.clone(),
 			queue: queue.clone(),
@@ -231,6 +234,7 @@ impl Gpu {
 			mode: Mode::Disabled,
 			cmd_queue: cmd_queue_rx,
 			raw_fb_renderer: None,
+			raw_fb_base_addr,
 		},
 		GpuWindowEventSink {
 			last_present_tex: None,
@@ -261,6 +265,9 @@ impl Gpu {
 				},
 				Command::PresentMMFB => {
 					self.present_mmfb();
+				},
+				Command::SetMMFBBase(base_address) => {
+					self.raw_fb_base_addr.store(base_address, Ordering::SeqCst);
 				}
 			}
 		}
@@ -288,7 +295,7 @@ impl Gpu {
 					self.swap_fb();
 				}
 				Mode::RawFBDisplay => {
-					self.raw_fb_renderer = Some(RawFBRenderer::new(&self.device).unwrap());
+					self.raw_fb_renderer = Some(RawFBRenderer::new(&self.device, self.raw_fb_base_addr.clone()).unwrap());
 				}
 			}
 		}
@@ -369,6 +376,8 @@ pub const GPU_REGISTER_PRESENT_MMFB: u32 = 4;
 
 pub const GPU_REGISTER_SYNC_INT_ENABLE: u32 = 8;
 
+pub const GPU_REGISTER_MMFB_BASE: u32 = 12;
+
 impl GpuPeripheralInterface {
 	pub fn new(cmd_queue: mpsc::Sender<Command>, sync_interrupt_enable: Arc<AtomicBool>) -> Self {
 		Self {
@@ -389,7 +398,7 @@ impl GpuPeripheralInterface {
 						self.cmd_queue.send(Command::SetMode(Mode::RawFBDisplay)).unwrap();
 						MemWriteResult::Ok
 					},
-					_ => MemWriteResult::ErrUnmapped
+					_ => MemWriteResult::PeripheralError
 				}
 			},
 			GPU_REGISTER_PRESENT_MMFB => {
@@ -399,7 +408,15 @@ impl GpuPeripheralInterface {
 			GPU_REGISTER_SYNC_INT_ENABLE => {
 				self.sync_interrupt_enable.store(value != 0, Ordering::SeqCst);
 				MemWriteResult::Ok
-			}
+			},
+			GPU_REGISTER_MMFB_BASE => {
+				if value & 0x03 != 0 {
+					MemWriteResult::PeripheralError
+				} else {
+					self.cmd_queue.send(Command::SetMMFBBase(value)).unwrap();
+					MemWriteResult::Ok
+				}
+			},
 			_ => MemWriteResult::ErrUnmapped
 		}
 	}

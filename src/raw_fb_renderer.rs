@@ -1,4 +1,5 @@
 use core::slice;
+use std::sync::{atomic::{Ordering, AtomicU32}, Arc};
 use shaderc;
 use wgpu::{self, TextureFormat};
 use crate::{fm_mio::FmMemoryIO, gpu};
@@ -8,10 +9,11 @@ pub struct RawFBRenderer {
 	bind_group: wgpu::BindGroup,
 	copy_buffer: Vec<u8>,
 	copy_texture: wgpu::Texture,
+	mmfb_base_address: Arc<AtomicU32>,
 }
 
 impl RawFBRenderer {
-	pub fn new(device: &wgpu::Device) -> Result<Self, String> {
+	pub fn new(device: &wgpu::Device, mmfb_base_address: Arc<AtomicU32>) -> Result<Self, String> {
 		let vs_src = include_str!("shaders/present.vert");
 		let fs_src = include_str!("shaders/present.frag");
 		let mut compiler = shaderc::Compiler::new().unwrap();
@@ -127,13 +129,14 @@ impl RawFBRenderer {
 			bind_group,
 			copy_buffer,
 			copy_texture,
+			mmfb_base_address,
 		})
 	}
 	
 	pub fn render(&mut self, mio: &mut FmMemoryIO, queue: &wgpu::Queue, command_encoder: &mut wgpu::CommandEncoder, framebuffer: &wgpu::TextureView) {
 		let mut offset = 0;
 		while offset < gpu::GPU_OUTPUT_FB_SIZE {
-			let fb_base = 0x0200_0000u32;
+			let fb_base = self.mmfb_base_address.load(Ordering::SeqCst);
 			mio.ram_sync_read(offset + fb_base);
 			// copy to mmfb buffer
 			let fb_mem_ptr = mio.raw_ram_ptr(offset + fb_base).unwrap();

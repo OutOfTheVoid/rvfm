@@ -8,6 +8,7 @@ use std::sync::mpsc;
 
 use crate::{fm_mio::FmMemoryIO, fm_interrupt_bus::FmInterruptBus, mtimer::MTimerPeripheral};
 
+#[derive(Debug)]
 enum CartData {
 	None,
 	FsR(PathBuf),
@@ -16,6 +17,7 @@ enum CartData {
 	BinaryRW(PathBuf),
 }
 
+#[derive(Debug)]
 struct Cart {
 	name: String,
 	version: (u32, u32, u32),
@@ -71,6 +73,14 @@ const COMPLETION_RESULT_NONE: u32 = 0;
 const COMPLETION_RESULT_OK: u32 = 1;
 const COMPLETION_RESULT_ERROR_READING_DIR: u32 = 1;
 
+fn get_json_string(value: Option<&json::JsonValue>) -> Option<String> {
+	match value {
+		Some(json::JsonValue::String(string)) => Some(string.clone()),
+		Some(json::JsonValue::Short(short)) => Some(short.to_string()),
+		_ => None,
+	}
+}
+
 impl CartLoader {
 	pub fn start(mut mio: FmMemoryIO, cpu0: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>, cpu1: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>) -> CartLoaderCpuBarrier {
 		let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -84,8 +94,11 @@ impl CartLoader {
 			param3: Arc::new(AtomicU32::new(0)),
 		};
 		mio.set_cart_loader(peripheral);
+		let mut cart_dir = std::env::current_dir().unwrap();
+		cart_dir.push("test");
+		cart_dir.push("cart_test");
 		let loader = Self {
-			library_dir: std::env::current_dir().unwrap(),
+			library_dir: cart_dir,
 			mio,
 			wait_lock: Arc::new(Mutex::new(CartLoaderWaitState {
 				wait: false,
@@ -163,49 +176,53 @@ impl CartLoader {
 			cart_info_path.push("cart.json");
 			if let Ok(cart_info_json) = std::fs::read_to_string(cart_info_path) {
 				if let Ok(info) = json::parse(cart_info_json.as_str()) {
+					println!("cart json: {:?}", info);
 					match info {
 						json::JsonValue::Object(info_fields) => {
-							let name = match info_fields.get("name") {
-								Some(json::JsonValue::String(name)) => name.clone(),
-								_ => {
-									println!("CartLoader warning: Cart at {} has no name.", cart_path_str);
+							let name = get_json_string(info_fields.get("name")).unwrap_or_else(|| {
+								println!("CartLoader warning: Cart at {} has no name.", cart_path_str);
 									"untitled ".to_string() + format!("{}", carts.len()).as_str()
-								}
-							};
-							let version = match info_fields.get("version") {
-								Some(json::JsonValue::String(version)) => {
-									let re = Regex::new("(\\d+).(\\d+).(\\d)").unwrap();
-									re.captures(version.as_str()).map_or_else(|| {
-										println!("CartLoader warning: Cart at {} has invalid version string: \"{}\".", cart_path_str, version);
-										(0, 0, 0)
-									}, |captures| {
-										(captures[1].parse().unwrap(), captures[2].parse().unwrap(), captures[3].parse().unwrap())
-									})
-								},
-								_ => {
-									println!("CartLoader warning: Cart at {} has no version!", cart_path_str);
+							});
+							let version_string = get_json_string(info_fields.get("version")).unwrap_or_else(|| {
+								println!("CartLoader warning: Cart at {} has no version!", cart_path_str);
+									"(0, 0, 0)".to_string()
+							});
+							let version =  {
+								let re = Regex::new("(\\d+).(\\d+).(\\d)").unwrap();
+								re.captures(version_string.as_str()).map_or_else(|| {
+									println!("CartLoader warning: Cart at {} has invalid version string: \"{}\".", cart_path_str, version_string);
 									(0, 0, 0)
-								}
+								}, |captures| {
+									(captures[1].parse().unwrap(), captures[2].parse().unwrap(), captures[3].parse().unwrap())
+								})
 							};
-							let developer = match info_fields.get("developer") {
-								Some(json::JsonValue::String(developer)) => developer.clone(),
-								_ => String::from("")
-							};
-							let developer_url = match info_fields.get("developer_url") {
-								Some(json::JsonValue::String(developer_url)) => developer_url.clone(),
-								_ => String::from("")
-							};
+							let developer = get_json_string(info_fields.get("developer")).unwrap_or(String::from(""));
+							let developer_url = get_json_string(info_fields.get("developer_url")).unwrap_or(String::from(""));
 							let icon = match info_fields.get("icon") {
-								Some(json::JsonValue::String(icon)) => Some(PathBuf::from(icon)),
+								Some(json::JsonValue::String(icon)) => {
+									if icon.len() > 0 {
+										Some(PathBuf::from(icon))
+									} else {
+										None
+									}
+								},
+								Some(json::JsonValue::Short(icon)) => {
+									if icon.as_str().len() > 0 {
+										Some(PathBuf::from(icon.as_str()))
+									} else {
+										None
+									}
+								},
 								_ => None
 							};
 							let data = match info_fields.get("data") {
 								Some(json::JsonValue::Object(data_fields)) => {
-									if let Some(json::JsonValue::String(format)) = data_fields.get("format") {
+									let format_str = get_json_string(data_fields.get("format"));
+									if let Some(format) = format_str {
 										match format.as_str() {
 											"none" => CartData::None,
 											"fs-ro" => {
-												if let Some(json::JsonValue::String(root_dir_name)) = data_fields.get("root_dir") {
+												if let Some(root_dir_name) = get_json_string(data_fields.get("root_dir")) {
 													let mut root_dir = cart_path.clone();
 													root_dir.push(root_dir_name);
 													if ! root_dir.exists() {
@@ -225,7 +242,7 @@ impl CartLoader {
 												}
 											},
 											"fs-rw" => {
-												if let Some(json::JsonValue::String(root_dir_name)) = data_fields.get("root_dir") {
+												if let Some(root_dir_name) = get_json_string(data_fields.get("root_dir")) {
 													let mut root_dir = cart_path;
 													root_dir.push(root_dir_name);
 													if ! root_dir.exists() {
@@ -245,7 +262,7 @@ impl CartLoader {
 												}
 											},
 											"binary-ro" => {
-												if let Some(json::JsonValue::String(data_file_name)) = data_fields.get("data_file") {
+												if let Some(data_file_name) = get_json_string(data_fields.get("data_file")) {
 													let mut data_file = cart_path;
 													data_file.push(data_file_name);
 													if ! data_file.exists() {
@@ -265,7 +282,7 @@ impl CartLoader {
 												}
 											},
 											"binary-rw" => {
-												if let Some(json::JsonValue::String(data_file_name)) = data_fields.get("data_file") {
+												if let Some(data_file_name) = get_json_string(data_fields.get("data_file")) {
 													let mut data_file = cart_path;
 													data_file.push(data_file_name);
 													if ! data_file.exists() {
@@ -296,9 +313,10 @@ impl CartLoader {
 								},
 								_ => CartData::None
 							};
-							if let Some(json::JsonValue::String(binary_path)) = info_fields.get("binary") {
+							let binary_path_string = get_json_string(info_fields.get("binary"));
+							if let Some(binary_path) = binary_path_string {
 								let binary = PathBuf::from(binary_path);
-								carts.push(Cart {
+								let new_cart = Cart {
 									name,
 									version,
 									binary,
@@ -306,7 +324,9 @@ impl CartLoader {
 									developer,
 									developer_url,
 									icon
-								});
+								};
+								println!("new cart: {:?}", new_cart);
+								carts.push(new_cart);
 							} else {
 								println!("CartLoader warning: Cart at {} has no binary!", cart_path_str);
 							}
@@ -318,6 +338,8 @@ impl CartLoader {
 				}
 			}
 		}
+		self.carts = carts;
+		self.cart_count.store(self.carts.len() as u32, Ordering::SeqCst);
 		self.mio.write_32(completion_signal_addr, COMPLETION_RESULT_OK);
 		self.mio.access_break();
 	}
