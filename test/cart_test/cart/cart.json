@@ -9,5 +9,5 @@
 		"format": "fs-ro",
 		"root_dir": "data"
 	},
-	"icon": ""
+	"icon": "cart.png"
 }

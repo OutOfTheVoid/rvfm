@@ -18,12 +18,32 @@ impl DspDmaMemIOParams {
 	}
 }
 
+#[derive(Copy, Clone, Debug)]
+struct DspDmaMem2dBlitIOParams {
+	addr: u32,
+	increment: i32,
+	blit_width: u32,
+	skip_width: u32,
+	restart_count: u32
+}
+
+impl DspDmaMem2dBlitIOParams {
+	pub fn get_addr(&self, transfer: u32) -> u32 {
+		let row = transfer / self.blit_width;
+		let transfer_wrapped = transfer.wrapping_add(self.skip_width * row).wrapping_rem(self.restart_count) as i32;
+		self.addr.wrapping_add(transfer_wrapped.wrapping_mul(self.increment) as u32)
+	}
+}
+
 #[derive(Debug, Clone, Copy)]
 enum DspDmaSource {
 	None,
 	Mem8(DspDmaMemIOParams),
 	Mem16(DspDmaMemIOParams),
 	Mem32(DspDmaMemIOParams),
+	Mem2dBlit8(DspDmaMem2dBlitIOParams),
+	Mem2dBlit16(DspDmaMem2dBlitIOParams),
+	Mem2dBlit32(DspDmaMem2dBlitIOParams),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +52,9 @@ enum DspDmaDest {
 	Mem8(DspDmaMemIOParams),
 	Mem16(DspDmaMemIOParams),
 	Mem32(DspDmaMemIOParams),
+	Mem2dBlit8(DspDmaMem2dBlitIOParams),
+	Mem2dBlit16(DspDmaMem2dBlitIOParams),
+	Mem2dBlit32(DspDmaMem2dBlitIOParams),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,6 +75,17 @@ enum DspDmaOp {
 	End,
 	Copy {source: DspDmaIOpSource, dest: DspDmaIOpDest},
 	Add {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	Sub {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	Mul {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	Div {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	Rem {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	And {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	Or {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	Xor {source_a: DspDmaIOpSource, source_b: DspDmaIOpSource, dest: DspDmaIOpDest},
+	CCopy {source: DspDmaIOpSource, source_cond: DspDmaIOpSource, dest: DspDmaIOpDest},
+	LShift {source: DspDmaIOpSource, source_shamt: DspDmaIOpSource, dest: DspDmaIOpDest},
+	RShift {source: DspDmaIOpSource, source_shamt: DspDmaIOpSource, dest: DspDmaIOpDest},
+	ARShift {source: DspDmaIOpSource, source_shamt: DspDmaIOpSource, dest: DspDmaIOpDest},
 }
 
 #[allow(dead_code)]
@@ -60,6 +94,7 @@ pub struct DspDmaDevice {
 	dst_list: [DspDmaDest; DEST_COUNT],
 	copy_buffer_a: Box<[u32]>,
 	copy_buffer_b: Box<[u32]>,
+	copy_buffer_c: Box<[u32]>,
 	ibuffer_list: Box<[Box<[u32]>]>,
 	fbuffer_list: Box<[Box<[f32]>]>,
 	program: [DspDmaOp; MAX_PROGRAM_SIZE as usize],
@@ -104,15 +139,32 @@ const SOURCE_TYPE_NONE: u32 = 0;
 const SOURCE_TYPE_MEM8: u32 = 1;
 const SOURCE_TYPE_MEM16: u32 = 2;
 const SOURCE_TYPE_MEM32: u32 = 3;
+const SOURCE_TYPE_MEM8_2DBLIT: u32 = 4;
+const SOURCE_TYPE_MEM16_2DBLIT: u32 = 5;
+const SOURCE_TYPE_MEM32_2DBLIT: u32 = 6;
 
 const DEST_TYPE_NONE: u32 = 0;
 const DEST_TYPE_MEM8: u32 = 1;
 const DEST_TYPE_MEM16: u32 = 2;
 const DEST_TYPE_MEM32: u32 = 3;
+const DEST_TYPE_MEM8_2DBLIT: u32 = 4;
+const DEST_TYPE_MEM16_2DBLIT: u32 = 5;
+const DEST_TYPE_MEM32_2DBLIT: u32 = 6;
 
 const OP_TYPE_END: u32 = 0;
 const OP_TYPE_COPY: u32 = 1;
 const OP_TYPE_ADD: u32 = 2;
+const OP_TYPE_SUB: u32 = 3;
+const OP_TYPE_MUL: u32 = 4;
+const OP_TYPE_DIV: u32 = 5;
+const OP_TYPE_REM: u32 = 6;
+const OP_TYPE_AND: u32 = 7;
+const OP_TYPE_OR: u32 = 8;
+const OP_TYPE_XOR: u32 = 9;
+const OP_TYPE_COND_COPY: u32 = 10;
+const OP_TYPE_LSHIFT: u32 = 11;
+const OP_TYPE_RSHIFT: u32 = 12;
+const OP_TYPE_ARSHIFT: u32 = 13;
 
 const COMMAND_TRIGGER: u32 = 0;
 const COMMAND_WRITE_SOURCE: u32 = 1;
@@ -168,6 +220,7 @@ impl DspDmaDevice {
 			dst_list: [DspDmaDest::None; DEST_COUNT],
 			copy_buffer_a: Self::make_ibuffer(),
 			copy_buffer_b: Self::make_ibuffer(),
+			copy_buffer_c: Self::make_ibuffer(),
 			ibuffer_list: ibuffers.into_boxed_slice(),
 			fbuffer_list: fbuffers.into_boxed_slice(),
 			program: [DspDmaOp::End; MAX_PROGRAM_SIZE as usize],
@@ -210,7 +263,7 @@ impl DspDmaDevice {
 					}
 				}
 				true
-			}
+			},
 			DspDmaSource::Mem16(mem_params) => {
 				for i in 0 .. transfer_count {
 					let addr = mem_params.get_addr(i + start_transfer);
@@ -226,8 +279,56 @@ impl DspDmaDevice {
 					}
 				}
 				true
-			}
+			},
 			DspDmaSource::Mem32(mem_params) => {
+				for i in 0 .. transfer_count {
+					let addr = mem_params.get_addr(i + start_transfer);
+					match mio.read_32(addr) {
+						MemReadResult::Ok(val) => target_buffer[i as usize] = val,
+						_ => {
+							self.mmreg_error = ERROR_MEMORY_ACCESS;
+							self.mmreg_error_param0 = addr;
+							self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_READ;
+							self.mmreg_error_param2 = source_index;
+							return false;
+						}
+					}
+				}
+				true
+			},
+			DspDmaSource::Mem2dBlit8(mem_params) => {
+				for i in 0 .. transfer_count {
+					let addr = mem_params.get_addr(i + start_transfer);
+					match mio.read_8(addr) {
+						MemReadResult::Ok(val) => target_buffer[i as usize] = val as u32,
+						_ => {
+							self.mmreg_error = ERROR_MEMORY_ACCESS;
+							self.mmreg_error_param0 = addr;
+							self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_READ;
+							self.mmreg_error_param2 = source_index;
+							return false;
+						}
+					}
+				}
+				true
+			},
+			DspDmaSource::Mem2dBlit16(mem_params) => {
+				for i in 0 .. transfer_count {
+					let addr = mem_params.get_addr(i + start_transfer);
+					match mio.read_16(addr) {
+						MemReadResult::Ok(val) => target_buffer[i as usize] = val as u32,
+						_ => {
+							self.mmreg_error = ERROR_MEMORY_ACCESS;
+							self.mmreg_error_param0 = addr;
+							self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_READ;
+							self.mmreg_error_param2 = source_index;
+							return false;
+						}
+					}
+				}
+				true
+			},
+			DspDmaSource::Mem2dBlit32(mem_params) => {
 				for i in 0 .. transfer_count {
 					let addr = mem_params.get_addr(i + start_transfer);
 					match mio.read_32(addr) {
@@ -319,7 +420,173 @@ impl DspDmaDevice {
 					}
 				}
 				true
-			}
+			},
+			DspDmaDest::Mem2dBlit8(mem_params) => {
+				for i in 0 .. transfer_count {
+					let addr = mem_params.get_addr(i + start_transfer);
+					match mio.write_8(addr, source_buffer[i as usize] as u8) {
+						MemWriteResult::Ok => {}
+						_ => {
+							self.mmreg_error = ERROR_MEMORY_ACCESS;
+							self.mmreg_error_param0 = addr;
+							self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+							self.mmreg_error_param2 = dest_index;
+							return false;
+						}
+					}
+				}
+				true
+			},
+			DspDmaDest::Mem2dBlit16(mem_params) => {
+				for i in 0 .. transfer_count {
+					let addr = mem_params.get_addr(i + start_transfer);
+					match mio.write_16(addr, source_buffer[i as usize] as u16) {
+						MemWriteResult::Ok => {}
+						_ => {
+							self.mmreg_error = ERROR_MEMORY_ACCESS;
+							self.mmreg_error_param0 = addr;
+							self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+							self.mmreg_error_param2 = dest_index;
+							return false;
+						}
+					}
+				}
+				true
+			},
+			DspDmaDest::Mem2dBlit32(mem_params) => {
+				for i in 0 .. transfer_count {
+					let addr = mem_params.get_addr(i + start_transfer);
+					match mio.write_32(addr, source_buffer[i as usize]) {
+						MemWriteResult::Ok => {}
+						_ => {
+							self.mmreg_error = ERROR_MEMORY_ACCESS;
+							self.mmreg_error_param0 = addr;
+							self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+							self.mmreg_error_param2 = dest_index;
+							return false;
+						}
+					}
+				}
+				true
+			},
+		}
+	}
+	
+	fn write_dest_conditional(&mut self, mio: &mut FmMemoryIO, dest: DspDmaDest, dest_index: u32, start_transfer: u32, transfer_count: u32, source_buffer: &[u32], condition_buffer: &[u32]) -> bool {
+		match dest {
+			DspDmaDest::None => {
+				self.mmreg_error = ERROR_USAGE_OF_NULL_DEST;
+				self.mmreg_error_param0 = dest_index;
+				false
+			},
+			DspDmaDest::Mem8(mem_params) => {
+				for i in 0 .. transfer_count {
+					if condition_buffer[i as usize] != 0 {
+						let addr = mem_params.get_addr(i + start_transfer);
+						match mio.write_8(addr, source_buffer[i as usize] as u8) {
+							MemWriteResult::Ok => {}
+							_ => {
+								self.mmreg_error = ERROR_MEMORY_ACCESS;
+								self.mmreg_error_param0 = addr;
+								self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+								self.mmreg_error_param2 = dest_index;
+								return false;
+							}
+						}
+					}
+				}
+				true
+			},
+			DspDmaDest::Mem16(mem_params) => {
+				for i in 0 .. transfer_count {
+					if condition_buffer[i as usize] != 0 {
+						let addr = mem_params.get_addr(i + start_transfer);
+						match mio.write_16(addr, source_buffer[i as usize] as u16) {
+							MemWriteResult::Ok => {}
+							_ => {
+								self.mmreg_error = ERROR_MEMORY_ACCESS;
+								self.mmreg_error_param0 = addr;
+								self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+								self.mmreg_error_param2 = dest_index;
+								return false;
+							}
+						}
+					}
+				}
+				true
+			},
+			DspDmaDest::Mem32(mem_params) => {
+				for i in 0 .. transfer_count {
+					if condition_buffer[i as usize] != 0 {
+						let addr = mem_params.get_addr(i + start_transfer);
+						match mio.write_32(addr, source_buffer[i as usize]) {
+							MemWriteResult::Ok => {}
+							_ => {
+								self.mmreg_error = ERROR_MEMORY_ACCESS;
+								self.mmreg_error_param0 = addr;
+								self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+								self.mmreg_error_param2 = dest_index;
+								return false;
+							}
+						}
+					}
+				}
+				true
+			},
+			DspDmaDest::Mem2dBlit8(mem_params) => {
+				for i in 0 .. transfer_count {
+					if condition_buffer[i as usize] != 0 {
+						let addr = mem_params.get_addr(i + start_transfer);
+						match mio.write_8(addr, source_buffer[i as usize] as u8) {
+							MemWriteResult::Ok => {}
+							_ => {
+								self.mmreg_error = ERROR_MEMORY_ACCESS;
+								self.mmreg_error_param0 = addr;
+								self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+								self.mmreg_error_param2 = dest_index;
+								return false;
+							}
+						}
+					}
+				}
+				true
+			},
+			DspDmaDest::Mem2dBlit16(mem_params) => {
+				for i in 0 .. transfer_count {
+					if condition_buffer[i as usize] != 0 {
+						let addr = mem_params.get_addr(i + start_transfer);
+						match mio.write_16(addr, source_buffer[i as usize] as u16) {
+							MemWriteResult::Ok => {}
+							_ => {
+								self.mmreg_error = ERROR_MEMORY_ACCESS;
+								self.mmreg_error_param0 = addr;
+								self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+								self.mmreg_error_param2 = dest_index;
+								return false;
+							}
+						}
+					}
+				}
+				true
+			},
+			DspDmaDest::Mem2dBlit32(mem_params) => {
+				for i in 0 .. transfer_count {
+					if condition_buffer[i as usize] != 0 {
+						let addr = mem_params.get_addr(i + start_transfer);
+						match mio.write_32(addr, source_buffer[i as usize]) {
+							MemWriteResult::Ok => {}
+							_ => {
+								self.mmreg_error = ERROR_MEMORY_ACCESS;
+								self.mmreg_error_param0 = addr;
+								self.mmreg_error_param1 = MEM_ACCESS_ERROR_TYPE_WRITE;
+								self.mmreg_error_param2 = dest_index;
+								return false;
+							}
+						}
+					}
+				}
+				true
+			},
 		}
 	}
 	
@@ -332,6 +599,23 @@ impl DspDmaDevice {
 			},
 			DspDmaIOpDest::Dest(dest_index) => {
 				self.write_dest(mio, self.dst_list[*dest_index as usize], *dest_index, start_transfer, transfer_count, source_buffer)
+			}
+		}
+	}
+	
+	fn write_op_dest_conditional(&mut self, mio: &mut FmMemoryIO, dest: &DspDmaIOpDest, start_transfer: u32, transfer_count: u32, source_buffer: &[u32], condition_buffer: &[u32]) -> bool {
+		match dest {
+			DspDmaIOpDest::IBuffer(buffer_index) => {
+				let target_buffer = &mut self.ibuffer_list[*buffer_index as usize];
+				for i in 0 .. transfer_count {
+					if condition_buffer[i as usize] != 0 { 
+						target_buffer[i as usize] = source_buffer[i as usize];
+					}
+				}
+				true
+			},
+			DspDmaIOpDest::Dest(dest_index) => {
+				self.write_dest_conditional(mio, self.dst_list[*dest_index as usize], *dest_index, start_transfer, transfer_count, source_buffer, condition_buffer)
 			}
 		}
 	}
@@ -367,6 +651,29 @@ impl DspDmaDevice {
 							}
 						}
 					},
+					DspDmaOp::CCopy {source , source_cond, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_ibuff), &DspDmaIOpSource::IBuffer(src_cond_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source, &source_cond, &dest) {
+							for i in 0 .. block_size {
+								if self.ibuffer_list[src_cond_ibuff as usize][i as usize] != 0 {
+									self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_ibuff as usize][i as usize];
+								}
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_cond = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source, transfer_count, block_size, &mut *copy_buffer_src) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_cond, transfer_count, block_size, &mut *copy_buffer_src_cond) {
+									return false;
+								}
+								if ! self.write_op_dest_conditional(mio, &dest, transfer_count, block_size, &*copy_buffer_src, &*copy_buffer_src_cond) {
+									return false;
+								}
+							}
+						}
+					},
 					DspDmaOp::Add {source_a , source_b, dest} => {
 						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
 							for i in 0 .. block_size {
@@ -390,7 +697,247 @@ impl DspDmaDevice {
 								}
 							}
 						}
-					}
+					},
+					DspDmaOp::Sub {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize].wrapping_sub(self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize].wrapping_sub((*copy_buffer_src_b)[i as usize]);
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::Mul {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize].wrapping_mul(self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize].wrapping_mul((*copy_buffer_src_b)[i as usize]);
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::Div {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize].wrapping_div(self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize].wrapping_div((*copy_buffer_src_b)[i as usize]);
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::Rem {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize].wrapping_rem(self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize].wrapping_rem((*copy_buffer_src_b)[i as usize]);
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::And {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize] & (self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize] & (*copy_buffer_src_b)[i as usize];
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::Or {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize] & (self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize] & (*copy_buffer_src_b)[i as usize];
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::Xor {source_a , source_b, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_a_ibuff), &DspDmaIOpSource::IBuffer(src_b_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source_a, &source_b, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_a_ibuff as usize][i as usize] & (self.ibuffer_list[src_b_ibuff as usize][i as usize]);
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source_a, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_b, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize] & (*copy_buffer_src_b)[i as usize];
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::LShift {source, source_shamt, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_ibuff), &DspDmaIOpSource::IBuffer(src_shamt_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source, &source_shamt, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_ibuff as usize][i as usize] << self.ibuffer_list[src_shamt_ibuff as usize][i as usize];
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_shamt, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize] << (*copy_buffer_src_b)[i as usize];
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::RShift {source, source_shamt, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_ibuff), &DspDmaIOpSource::IBuffer(src_shamt_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source, &source_shamt, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = self.ibuffer_list[src_ibuff as usize][i as usize] >> self.ibuffer_list[src_shamt_ibuff as usize][i as usize];
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_shamt, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = (*copy_buffer_src_a)[i as usize] >> (*copy_buffer_src_b)[i as usize];
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
+					DspDmaOp::ARShift {source, source_shamt, dest} => {
+						if let (&DspDmaIOpSource::IBuffer(src_ibuff), &DspDmaIOpSource::IBuffer(src_shamt_ibuff), &DspDmaIOpDest::IBuffer(dst_ibuff)) = (&source, &source_shamt, &dest) {
+							for i in 0 .. block_size {
+								self.ibuffer_list[dst_ibuff as usize][i as usize] = ((self.ibuffer_list[src_ibuff as usize][i as usize] as i32) >> (self.ibuffer_list[src_shamt_ibuff as usize][i as usize] as i32)) as u32;
+							}
+						} else {
+							unsafe {
+								let copy_buffer_src_a = &mut *self.copy_buffer_a as *mut [u32];
+								let copy_buffer_src_b = &mut *self.copy_buffer_b as *mut [u32];
+								if ! self.read_op_source(mio, &source, transfer_count, block_size, &mut *copy_buffer_src_a) {
+									return false;
+								}
+								if ! self.read_op_source(mio, &source_shamt, transfer_count, block_size, &mut *copy_buffer_src_b) {
+									return false;
+								}
+								for i in 0 .. block_size {
+									(*copy_buffer_src_a)[i as usize] = ((*copy_buffer_src_a)[i as usize] as i32 >> ((*copy_buffer_src_b)[i as usize] as i32)) as u32;
+								}
+								if ! self.write_op_dest(mio, &dest, transfer_count, block_size, &*copy_buffer_src_a) {
+									return false;
+								}
+							}
+						}
+					},
 				}
 				pc = pc + 1;
 				if pc >= MAX_PROGRAM_SIZE {
@@ -501,6 +1048,39 @@ impl DspDmaDevice {
 						self.dst_list[self.mmreg_index as usize] = DspDmaDest::Mem32(mem_params);
 						true
 					},
+					DEST_TYPE_MEM8_2DBLIT => {
+						let mem_params = DspDmaMem2dBlitIOParams {
+							addr: self.mmreg_param0,
+							increment: self.mmreg_param1 as i32,
+							restart_count: self.mmreg_param2,
+							blit_width: self.mmreg_param3,
+							skip_width: self.mmreg_param4,
+						};
+						self.dst_list[self.mmreg_index as usize] = DspDmaDest::Mem2dBlit8(mem_params);
+						true
+					},
+					DEST_TYPE_MEM16_2DBLIT => {
+						let mem_params = DspDmaMem2dBlitIOParams {
+							addr: self.mmreg_param0,
+							increment: self.mmreg_param1 as i32,
+							restart_count: self.mmreg_param2,
+							blit_width: self.mmreg_param3,
+							skip_width: self.mmreg_param4,
+						};
+						self.dst_list[self.mmreg_index as usize] = DspDmaDest::Mem2dBlit16(mem_params);
+						true
+					},
+					DEST_TYPE_MEM32_2DBLIT => {
+						let mem_params = DspDmaMem2dBlitIOParams {
+							addr: self.mmreg_param0,
+							increment: self.mmreg_param1 as i32,
+							restart_count: self.mmreg_param2,
+							blit_width: self.mmreg_param3,
+							skip_width: self.mmreg_param4,
+						};
+						self.dst_list[self.mmreg_index as usize] = DspDmaDest::Mem2dBlit32(mem_params);
+						true
+					}
 					_ => {
 						self.mmreg_error = ERROR_TYPE_OUT_OF_RANGE;
 						self.mmreg_error_param0 = self.mmreg_type;
@@ -544,6 +1124,39 @@ impl DspDmaDevice {
 							restart_count: self.mmreg_param2
 						};
 						self.src_list[self.mmreg_index as usize] = DspDmaSource::Mem32(mem_params);
+						true
+					},
+					SOURCE_TYPE_MEM8_2DBLIT => {
+						let mem_params = DspDmaMem2dBlitIOParams {
+							addr: self.mmreg_param0,
+							increment: self.mmreg_param1 as i32,
+							restart_count: self.mmreg_param2,
+							blit_width: self.mmreg_param3,
+							skip_width: self.mmreg_param4,
+						};
+						self.src_list[self.mmreg_index as usize] = DspDmaSource::Mem2dBlit8(mem_params);
+						true
+					},
+					SOURCE_TYPE_MEM16_2DBLIT => {
+						let mem_params = DspDmaMem2dBlitIOParams {
+							addr: self.mmreg_param0,
+							increment: self.mmreg_param1 as i32,
+							restart_count: self.mmreg_param2,
+							blit_width: self.mmreg_param3,
+							skip_width: self.mmreg_param4,
+						};
+						self.src_list[self.mmreg_index as usize] = DspDmaSource::Mem2dBlit16(mem_params);
+						true
+					},
+					SOURCE_TYPE_MEM32_2DBLIT => {
+						let mem_params = DspDmaMem2dBlitIOParams {
+							addr: self.mmreg_param0,
+							increment: self.mmreg_param1 as i32,
+							restart_count: self.mmreg_param2,
+							blit_width: self.mmreg_param3,
+							skip_width: self.mmreg_param4,
+						};
+						self.src_list[self.mmreg_index as usize] = DspDmaSource::Mem2dBlit32(mem_params);
 						true
 					},
 					_ => {
@@ -598,7 +1211,227 @@ impl DspDmaDevice {
 							dest
 						};
 						true
-					}
+					},
+					OP_TYPE_SUB => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::Sub{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					},
+					OP_TYPE_MUL => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::Mul{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					},
+					OP_TYPE_DIV => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::Div{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					},
+					OP_TYPE_REM => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::Rem{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					},
+					OP_TYPE_AND => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::And{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					},
+					OP_TYPE_OR => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::Or{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					},
+					OP_TYPE_XOR => {
+						let source_a = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_b = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::Xor{
+							source_a,
+							source_b,
+							dest
+						};
+						true
+					},
+					OP_TYPE_COND_COPY => {
+						let source = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_cond = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::CCopy {
+							source,
+							source_cond,
+							dest
+						};
+						true
+					},
+					OP_TYPE_LSHIFT => {
+						let source = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_shamt = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::LShift{
+							source,
+							source_shamt,
+							dest
+						};
+						true
+					},
+					OP_TYPE_RSHIFT => {
+						let source = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_shamt = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::RShift{
+							source,
+							source_shamt,
+							dest
+						};
+						true
+					},
+					OP_TYPE_ARSHIFT => {
+						let source = match self.parse_iop_source(self.mmreg_param0, self.mmreg_param1) {
+							Some(source) => source,
+							None => return false,
+						};
+						let source_shamt = match self.parse_iop_source(self.mmreg_param2, self.mmreg_param3) {
+							Some(source) => source,
+							None => return false,
+						};
+						let dest = match self.parse_iop_dest(self.mmreg_param4, self.mmreg_param5) {
+							Some(dest) => dest,
+							None => return false,
+						};
+						self.program[self.mmreg_index as usize] = DspDmaOp::ARShift{
+							source,
+							source_shamt,
+							dest
+						};
+						true
+					},
 					_ => {
 						self.mmreg_error = ERROR_TYPE_OUT_OF_RANGE;
 						self.mmreg_error_param0 = self.mmreg_type;

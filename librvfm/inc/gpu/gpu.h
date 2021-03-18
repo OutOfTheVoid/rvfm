@@ -3,11 +3,12 @@
 
 #include <common.h>
 
-#define GPU_RAW_FRAMEBUFFER ((volatile uint32_t *) 0x2000000)
-
 #define GPU_MODE_SET *((volatile uint32_t *) 0xF0010000)
 #define GPU_PRESENT_MMFB *((volatile uint32_t *) 0xF0010004)
 #define GPU_VSYNC_INT_ENABLE *((volatile uint32_t *) 0xF0010008)
+#define GPU_RAW_FRAMEBUFFER_PTR *((volatile uint32_t *) 0xF001000C)
+
+#define GPU_RAW_FRAMEBUFFER_PTR_DEFAULT ((volatile uint32_t *) 0x02000000)
 
 #define GPU_MODE_DISABLED 0
 #define GPU_MODE_RAW_FRAMEBUFFER 1
@@ -18,8 +19,8 @@
 #define GPU_OUTPUT_RESOLUTION_W 256
 
 typedef enum {
-	Disabled = GPU_MODE_DISABLED,
-	RawFramebuffer = GPU_MODE_RAW_FRAMEBUFFER,
+	GpuMode_Disabled = GPU_MODE_DISABLED,
+	GpuMode_RawFramebuffer = GPU_MODE_RAW_FRAMEBUFFER,
 } GpuMode;
 
 inline static void gpu_set_mode(GpuMode mode) {

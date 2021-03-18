@@ -340,7 +340,7 @@ impl Gpu {
 		let fb_view = framebuffer.create_view(&wgpu::TextureViewDescriptor {
 			label: Some("fb draw view"),
 			dimension: Some(wgpu::TextureViewDimension::D2),
-			format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+			format: Some(wgpu::TextureFormat::Rgba8Unorm),
 			aspect: wgpu::TextureAspect::All,
 			base_mip_level: 0,
 			level_count: None,

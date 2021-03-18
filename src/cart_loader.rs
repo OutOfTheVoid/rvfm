@@ -1,5 +1,6 @@
 use std::{io, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}}};
 use bytemuck::offset_of;
+use image::ImageResult;
 use json::JsonValue;
 use parking_lot::{Condvar, Mutex};
 use regex::Regex;
@@ -8,7 +9,7 @@ use std::sync::mpsc;
 
 use crate::{fm_mio::FmMemoryIO, fm_interrupt_bus::FmInterruptBus, mtimer::MTimerPeripheral};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum CartData {
 	None,
 	FsR(PathBuf),
@@ -17,14 +18,16 @@ enum CartData {
 	BinaryRW(PathBuf),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Cart {
+	path: PathBuf,
 	name: String,
 	version: (u32, u32, u32),
 	binary: PathBuf,
 	data: CartData,
 	developer: String,
 	developer_url: String,
+	source: String,
 	icon: Option<PathBuf>,
 }
 
@@ -53,7 +56,7 @@ impl CartLoaderCpuBarrier {
 #[derive(Clone, Debug)]
 enum CartLoaderCmd {
 	EnumerateCarts(u32),
-	ReadCartMetadata{index: u32, data_write_addr: u32},
+	ReadCartMetadata{index: u32, metadata_struct_addr: u32, completion_addr: u32},
 	LoadCart{index: u32, error_write_addr: u32},
 }
 
@@ -71,7 +74,8 @@ pub struct CartLoader {
 
 const COMPLETION_RESULT_NONE: u32 = 0;
 const COMPLETION_RESULT_OK: u32 = 1;
-const COMPLETION_RESULT_ERROR_READING_DIR: u32 = 1;
+const COMPLETION_RESULT_ERROR_READING_DIR: u32 = 2;
+const COMPLETION_RESULT_CART_OUT_OF_INDEX: u32 = 3;
 
 fn get_json_string(value: Option<&json::JsonValue>) -> Option<String> {
 	match value {
@@ -176,7 +180,6 @@ impl CartLoader {
 			cart_info_path.push("cart.json");
 			if let Ok(cart_info_json) = std::fs::read_to_string(cart_info_path) {
 				if let Ok(info) = json::parse(cart_info_json.as_str()) {
-					println!("cart json: {:?}", info);
 					match info {
 						json::JsonValue::Object(info_fields) => {
 							let name = get_json_string(info_fields.get("name")).unwrap_or_else(|| {
@@ -198,6 +201,7 @@ impl CartLoader {
 							};
 							let developer = get_json_string(info_fields.get("developer")).unwrap_or(String::from(""));
 							let developer_url = get_json_string(info_fields.get("developer_url")).unwrap_or(String::from(""));
+							let source = get_json_string(info_fields.get("source")).unwrap_or(String::from(""));
 							let icon = match info_fields.get("icon") {
 								Some(json::JsonValue::String(icon)) => {
 									if icon.len() > 0 {
@@ -243,7 +247,7 @@ impl CartLoader {
 											},
 											"fs-rw" => {
 												if let Some(root_dir_name) = get_json_string(data_fields.get("root_dir")) {
-													let mut root_dir = cart_path;
+													let mut root_dir = cart_path.clone();
 													root_dir.push(root_dir_name);
 													if ! root_dir.exists() {
 														println!("CartLoader warning: Cart at {} data root_dir does not exist!", cart_path_str);
@@ -263,7 +267,7 @@ impl CartLoader {
 											},
 											"binary-ro" => {
 												if let Some(data_file_name) = get_json_string(data_fields.get("data_file")) {
-													let mut data_file = cart_path;
+													let mut data_file = cart_path.clone();
 													data_file.push(data_file_name);
 													if ! data_file.exists() {
 														println!("CartLoader warning: Cart at {} data data_file does not exist!", cart_path_str);
@@ -283,7 +287,7 @@ impl CartLoader {
 											},
 											"binary-rw" => {
 												if let Some(data_file_name) = get_json_string(data_fields.get("data_file")) {
-													let mut data_file = cart_path;
+													let mut data_file = cart_path.clone();
 													data_file.push(data_file_name);
 													if ! data_file.exists() {
 														println!("CartLoader warning: Cart at {} data data_file does not exist!", cart_path_str);
@@ -317,15 +321,16 @@ impl CartLoader {
 							if let Some(binary_path) = binary_path_string {
 								let binary = PathBuf::from(binary_path);
 								let new_cart = Cart {
+									path: cart_path.clone(),
 									name,
 									version,
 									binary,
 									data,
 									developer,
 									developer_url,
+									source,
 									icon
 								};
-								println!("new cart: {:?}", new_cart);
 								carts.push(new_cart);
 							} else {
 								println!("CartLoader warning: Cart at {} has no binary!", cart_path_str);
@@ -344,8 +349,73 @@ impl CartLoader {
 		self.mio.access_break();
 	}
 	
-	fn read_cart_metadata(&mut self, index: u32, data_write_addr: u32) {
-		
+	fn write_cart_metadata_string(&mut self, string: &String, string_addr: u32) {
+		let str_len = string.as_bytes().len().min(255) as u32;
+		for i in 0 .. str_len {
+			self.mio.write_8(string_addr + i, string.as_bytes()[i as usize]);
+		}
+		self.mio.write_8(string_addr + str_len, 0);
+	}
+	
+	fn read_cart_metadata(&mut self, index: u32, metadata_struct_addr: u32, completion_addr: u32) {
+		if index >= self.carts.len() as u32 {
+			self.mio.write_32(completion_addr, COMPLETION_RESULT_CART_OUT_OF_INDEX);
+			self.mio.access_break();
+			return;
+		}
+		let cart = self.carts[index as usize].clone();
+		self.write_cart_metadata_string(&cart.name, metadata_struct_addr);
+		self.write_cart_metadata_string(&cart.developer, metadata_struct_addr + 0x100);
+		self.write_cart_metadata_string(&cart.developer_url, metadata_struct_addr + 0x200);
+		self.write_cart_metadata_string(&cart.source, metadata_struct_addr + 0x300);
+		let icon_data = {
+			if let Some(icon_filename) = cart.icon {
+				let mut icon_path = cart.path.clone();
+				icon_path.push(icon_filename);
+				println!("Icon path: {:?}!", icon_path);
+				match image::open(icon_path) {
+					Ok(icon_image) => {
+						println!("Found icon image for cart {}!", cart.name);
+						let icon_image = icon_image.into_rgba8();
+						let (w, h) = icon_image.dimensions();
+						if w != 64 || h != 64 {
+							println!("Warning: icon image for cart {} is not 64x64!", cart.name);
+							None
+						} else {
+							let mut image_data = vec![0u32; 64 * 64].into_boxed_slice();
+							for y in 0 .. 64 as u32 {
+								for x in 0 .. 64 as u32 {
+									image_data[(x + y * 64) as usize] = 
+										(icon_image.get_pixel(x, y)[0] as u32) |
+										(icon_image.get_pixel(x, y)[1] as u32) << 8 |
+										(icon_image.get_pixel(x, y)[2] as u32) << 16 |
+										(icon_image.get_pixel(x, y)[3] as u32) << 24;
+								}
+							}
+							Some(image_data)
+						}
+					},
+					Err(..) => None
+				}
+			} else {
+				None
+			}
+		};
+		if let Some(image_data) = icon_data {
+			for i in 0 .. 64 * 64 {
+				self.mio.write_32(metadata_struct_addr + 0x400 + (i * 4) as u32, image_data[i]);
+			}
+		} else {
+			for i in 0 .. 64 * 64 {
+				self.mio.write_32(metadata_struct_addr + 0x400 + (i * 4) as u32, 0xFFFFFFFF);
+			}
+		}
+		let (major, minor, rev) = cart.version;
+		self.mio.write_32(metadata_struct_addr + 0x40400, rev);
+		self.mio.write_32(metadata_struct_addr + 0x40404, minor);
+		self.mio.write_32(metadata_struct_addr + 0x40408, major);
+		self.mio.write_32(completion_addr, COMPLETION_RESULT_OK);
+		self.mio.access_break();
 	}
 	
 	pub fn run(mut self) {
@@ -358,9 +428,10 @@ impl CartLoader {
 						},
 						CartLoaderCmd::ReadCartMetadata {
 							index, 
-							data_write_addr
+							metadata_struct_addr,
+							completion_addr
 						} => {
-							self.read_cart_metadata(index, data_write_addr);
+							self.read_cart_metadata(index, metadata_struct_addr, completion_addr);
 						},
 						CartLoaderCmd::LoadCart {
 							index, 
@@ -447,6 +518,17 @@ impl CartLoaderPeripheral {
 				self.cmd_tx.send(CartLoaderCmd::LoadCart {
 					index,
 					error_write_addr
+				}).unwrap();
+				true
+			},
+			COMMAND_READ_CART_METADATA => {
+				let index = self.param0.load(Ordering::SeqCst);
+				let metadata_struct_addr = self.param1.load(Ordering::SeqCst);
+				let completion_addr = self.param2.load(Ordering::SeqCst);
+				self.cmd_tx.send(CartLoaderCmd::ReadCartMetadata {
+					index,
+					metadata_struct_addr,
+					completion_addr
 				}).unwrap();
 				true
 			},

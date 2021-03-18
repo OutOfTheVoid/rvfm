@@ -725,7 +725,7 @@ fn load_program_header<Timer: MTimer, Mem: MemIO<Timer>>(file_data: &[u8], progr
 			if (offset + f_size) as usize > file_data.len() {
 				return Err("program header specifies data outside of elf file range".to_string());
 			}
-			for i in 0 .. m_size {
+			for i in 0 .. f_size {
 				match mio.write_8(m_addr + i, file_data[(offset + i) as usize]) {
 					rv_vsys::MemWriteResult::Ok => {},
 					_ => return Err(format!("failed to write to address {:#010x}", m_addr + i).to_string())

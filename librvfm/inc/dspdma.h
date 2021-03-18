@@ -21,15 +21,32 @@ C_START
 #define DSPDMA_SOURCE_TYPE_MEM8 1
 #define DSPDMA_SOURCE_TYPE_MEM16 2
 #define DSPDMA_SOURCE_TYPE_MEM32 3
+#define DSPDMA_SOURCE_TYPE_MEM8_2DBLIT 4
+#define DSPDMA_SOURCE_TYPE_MEM16_2DBLIT 5
+#define DSPDMA_SOURCE_TYPE_MEM32_2DBLIT 6
 
 #define DSPDMA_DEST_TYPE_NONE 0
 #define DSPDMA_DEST_TYPE_MEM8 1
 #define DSPDMA_DEST_TYPE_MEM16 2
 #define DSPDMA_DEST_TYPE_MEM32 3
+#define DSPDMA_DEST_TYPE_MEM8_2DBLIT 4
+#define DSPDMA_DEST_TYPE_MEM16_2DBLIT 5
+#define DSPDMA_DEST_TYPE_MEM32_2DBLIT 6
 
 #define DSPDMA_OP_TYPE_END 0
 #define DSPDMA_OP_TYPE_COPY 1
 #define DSPDMA_OP_TYPE_ADD 2
+#define DSPDMA_OP_TYPE_SUB 3
+#define DSPDMA_OP_TYPE_MUL 4
+#define DSPDMA_OP_TYPE_DIV 5
+#define DSPDMA_OP_TYPE_REM 6
+#define DSPDMA_OP_TYPE_AND 7
+#define DSPDMA_OP_TYPE_OR 8
+#define DSPDMA_OP_TYPE_XOR 9
+#define DSPDMA_OP_TYPE_CCOPY 10
+#define DSPDMA_OP_TYPE_LSHIFT 11
+#define DSPDMA_OP_TYPE_RSHIFT 12
+#define DSPDMA_OP_TYPE_ARSHIFT 13
 
 #define DSPDMA_COMMAND_TRIGGER 0
 #define DSPDMA_COMMAND_WRITE_SOURCE 1
@@ -159,6 +176,42 @@ inline static int dspdma_source_mem32(uint32_t index, void * address, uint32_t i
 	return DSPDMA_ERROR;
 }
 
+inline static int dspdma_source_mem8_blit2d(uint32_t index, void * address, uint32_t increment, uint32_t blit_w, uint32_t row_w, uint32_t loop_index) {
+	DSPDMA_TYPE = DSPDMA_SOURCE_TYPE_MEM8_2DBLIT;
+	DSPDMA_INDEX = index;
+	DSPDMA_PARAM0 = (uint32_t) address;
+	DSPDMA_PARAM1 = increment;
+	DSPDMA_PARAM2 = loop_index;
+	DSPDMA_PARAM3 = blit_w;
+	DSPDMA_PARAM4 = row_w - blit_w;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_SOURCE;
+	return DSPDMA_ERROR;
+}
+
+inline static int dspdma_source_mem16_blit2d(uint32_t index, void * address, uint32_t increment, uint32_t blit_w, uint32_t row_w, uint32_t loop_index) {
+	DSPDMA_TYPE = DSPDMA_SOURCE_TYPE_MEM16_2DBLIT;
+	DSPDMA_INDEX = index;
+	DSPDMA_PARAM0 = (uint32_t) address;
+	DSPDMA_PARAM1 = increment;
+	DSPDMA_PARAM2 = loop_index;
+	DSPDMA_PARAM3 = blit_w;
+	DSPDMA_PARAM4 = row_w - blit_w;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_SOURCE;
+	return DSPDMA_ERROR;
+}
+
+inline static int dspdma_source_mem32_blit2d(uint32_t index, void * address, uint32_t increment, uint32_t blit_w, uint32_t row_w, uint32_t loop_index) {
+	DSPDMA_TYPE = DSPDMA_SOURCE_TYPE_MEM32_2DBLIT;
+	DSPDMA_INDEX = index;
+	DSPDMA_PARAM0 = (uint32_t) address;
+	DSPDMA_PARAM1 = increment;
+	DSPDMA_PARAM2 = loop_index;
+	DSPDMA_PARAM3 = blit_w;
+	DSPDMA_PARAM4 = row_w - blit_w;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_SOURCE;
+	return DSPDMA_ERROR;
+}
+
 inline static int dspdma_source_none(uint32_t index) {
 	DSPDMA_TYPE = DSPDMA_SOURCE_TYPE_NONE;
 	DSPDMA_INDEX = index;
@@ -192,6 +245,44 @@ inline static int dspdma_dest_mem32(uint32_t index, void * address, uint32_t inc
 	DSPDMA_PARAM0 = (uint32_t) address;
 	DSPDMA_PARAM1 = increment;
 	DSPDMA_PARAM2 = loop_index;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_DEST;
+	return DSPDMA_ERROR;
+}
+
+
+
+inline static int dspdma_dest_mem8_blit2d(uint32_t index, void * address, uint32_t increment, uint32_t blit_w, uint32_t row_w, uint32_t loop_index) {
+	DSPDMA_TYPE = DSPDMA_DEST_TYPE_MEM8_2DBLIT;
+	DSPDMA_INDEX = index;
+	DSPDMA_PARAM0 = (uint32_t) address;
+	DSPDMA_PARAM1 = increment;
+	DSPDMA_PARAM2 = loop_index;
+	DSPDMA_PARAM3 = blit_w;
+	DSPDMA_PARAM4 = row_w - blit_w;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_DEST;
+	return DSPDMA_ERROR;
+}
+
+inline static int dspdma_dest_mem16_blit2d(uint32_t index, void * address, uint32_t increment, uint32_t blit_w, uint32_t row_w, uint32_t loop_index) {
+	DSPDMA_TYPE = DSPDMA_DEST_TYPE_MEM16_2DBLIT;
+	DSPDMA_INDEX = index;
+	DSPDMA_PARAM0 = (uint32_t) address;
+	DSPDMA_PARAM1 = increment;
+	DSPDMA_PARAM2 = loop_index;
+	DSPDMA_PARAM3 = blit_w;
+	DSPDMA_PARAM4 = row_w - blit_w;
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_DEST;
+	return DSPDMA_ERROR;
+}
+
+inline static int dspdma_dest_mem32_blit2d(uint32_t index, void * address, uint32_t increment, uint32_t blit_w, uint32_t row_w, uint32_t loop_index) {
+	DSPDMA_TYPE = DSPDMA_DEST_TYPE_MEM32_2DBLIT;
+	DSPDMA_INDEX = index;
+	DSPDMA_PARAM0 = (uint32_t) address;
+	DSPDMA_PARAM1 = increment;
+	DSPDMA_PARAM2 = loop_index;
+	DSPDMA_PARAM3 = blit_w;
+	DSPDMA_PARAM4 = row_w - blit_w;
 	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_DEST;
 	return DSPDMA_ERROR;
 }
@@ -262,6 +353,98 @@ static inline int dspdma_op_add (uint32_t op_index, dspdma_op_src_t source_a, ds
 			break;
 		case DspDma_OpSource_Source:
 			DSPDMA_PARAM3 = source_b.source;
+			break;
+		default:
+			return -1;
+	}
+	DSPDMA_PARAM4 = dest.type;
+	switch (dest.type) {
+		case DspDma_OpDest_IBuff:
+			DSPDMA_PARAM5 = dest.ibuff;
+			break;
+		case DspDma_OpDest_Dest:
+			DSPDMA_PARAM5 = dest.dest;
+			break;
+		default:
+			return -1;
+	}
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
+	return DSPDMA_ERROR;
+}
+
+static inline int dspdma_op_and (uint32_t op_index, dspdma_op_src_t source_a, dspdma_op_src_t source_b, dspdma_op_dest_t dest) {
+	DSPDMA_TYPE = DSPDMA_OP_TYPE_AND;
+	DSPDMA_INDEX = op_index;
+	DSPDMA_PARAM0 = source_a.type;
+	switch (source_a.type) {
+		case DspDma_OpSource_Constant:
+			DSPDMA_PARAM1 = source_a.constant;
+			break;
+		case DspDma_OpSource_IBuff:
+			DSPDMA_PARAM1 = source_a.ibuff;
+			break;
+		case DspDma_OpSource_Source:
+			DSPDMA_PARAM1 = source_a.source;
+			break;
+		default:
+			return -1;
+	}
+	DSPDMA_PARAM2 = source_b.type;
+	switch (source_b.type) {
+		case DspDma_OpSource_Constant:
+			DSPDMA_PARAM3 = source_b.constant;
+			break;
+		case DspDma_OpSource_IBuff:
+			DSPDMA_PARAM3 = source_b.ibuff;
+			break;
+		case DspDma_OpSource_Source:
+			DSPDMA_PARAM3 = source_b.source;
+			break;
+		default:
+			return -1;
+	}
+	DSPDMA_PARAM4 = dest.type;
+	switch (dest.type) {
+		case DspDma_OpDest_IBuff:
+			DSPDMA_PARAM5 = dest.ibuff;
+			break;
+		case DspDma_OpDest_Dest:
+			DSPDMA_PARAM5 = dest.dest;
+			break;
+		default:
+			return -1;
+	}
+	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
+	return DSPDMA_ERROR;
+}
+
+static inline int dspdma_op_conditional_copy (uint32_t op_index, dspdma_op_src_t source, dspdma_op_src_t source_cond, dspdma_op_dest_t dest) {
+	DSPDMA_TYPE = DSPDMA_OP_TYPE_CCOPY;
+	DSPDMA_INDEX = op_index;
+	DSPDMA_PARAM0 = source.type;
+	switch (source.type) {
+		case DspDma_OpSource_Constant:
+			DSPDMA_PARAM1 = source.constant;
+			break;
+		case DspDma_OpSource_IBuff:
+			DSPDMA_PARAM1 = source.ibuff;
+			break;
+		case DspDma_OpSource_Source:
+			DSPDMA_PARAM1 = source.source;
+			break;
+		default:
+			return -1;
+	}
+	DSPDMA_PARAM2 = source_cond.type;
+	switch (source_cond.type) {
+		case DspDma_OpSource_Constant:
+			DSPDMA_PARAM3 = source_cond.constant;
+			break;
+		case DspDma_OpSource_IBuff:
+			DSPDMA_PARAM3 = source_cond.ibuff;
+			break;
+		case DspDma_OpSource_Source:
+			DSPDMA_PARAM3 = source_cond.source;
 			break;
 		default:
 			return -1;
