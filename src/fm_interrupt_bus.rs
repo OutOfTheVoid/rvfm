@@ -111,7 +111,7 @@ impl InterruptBus for FmInterruptBus {
 	fn poll_interrupts(&mut self, hart_id: u32) -> bool {
 		match hart_id {
 			0 => {
-				self.gpu_interrupts.get().unwrap().clone().poll_sync_interrupt()// || self.cpu0_ipi.load(Ordering::SeqCst)
+				self.gpu_interrupts.get().unwrap().clone().get_sync_interrupt_state()// || self.cpu0_ipi.load(Ordering::SeqCst)
 			},
 			1 => {
 				self.sound_interrupt.get().unwrap().clone().poll_audio_interrupt()// || self.cpu1_ipi.load(Ordering::SeqCst)

@@ -16,6 +16,7 @@ inline static void gpu_vsync_wait_interrupt_callback() {
 inline static void gpu_vsync_wait_init() {
 	gpu_clear_vsync_interrupt();
 	gpu_enable_vsync_interrupt();
+	vsync_wait = 0;
 }
 
 inline static void gpu_vsync_wait() {

@@ -65,9 +65,11 @@ impl ApplicationGUI {
 				Event::MainEventsCleared => {
 					// redraw
 					window.request_redraw();
+					*control_flow = ControlFlow::Poll;
 				},
 				Event::RedrawRequested(_) => {
 					gpu_event_sink.render_event();
+					*control_flow = ControlFlow::Poll;
 				}
 				Event::WindowEvent{event: WindowEvent::CloseRequested, ..} => {
 					*control_flow = ControlFlow::Exit;
@@ -89,6 +91,7 @@ impl ApplicationGUI {
 						}
 						
 					}{}
+					*control_flow = ControlFlow::Poll;
 				},
 				_ => {
 					*control_flow = ControlFlow::Poll;

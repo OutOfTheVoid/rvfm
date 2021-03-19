@@ -115,7 +115,7 @@ void main() {
 	
 	while(true) {
 		draw();
-		gpu_vsync_wait();
 		gpu_mmfb_present();
+		gpu_vsync_wait();
 	}
 }

@@ -1,5 +1,6 @@
 use core::slice;
 use std::sync::{atomic::{Ordering, AtomicU32}, Arc};
+use rv_vsys::MemIO;
 use shaderc;
 use wgpu::{self, TextureFormat};
 use crate::{fm_mio::FmMemoryIO, gpu};
@@ -150,6 +151,7 @@ impl RawFBRenderer {
 			}
 			offset += 0x1000;
 		}
+		mio.access_break();
 		queue.write_texture(
 			wgpu::TextureCopyView {
 				texture: &self.copy_texture,
@@ -166,7 +168,7 @@ impl RawFBRenderer {
 				height: gpu::GPU_OUTPUT_H,
 				depth: 1
 			});
-		queue.submit(None);
+		//
 		{
 			let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 				color_attachments: &[

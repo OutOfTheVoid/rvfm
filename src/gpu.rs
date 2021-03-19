@@ -2,7 +2,7 @@ use std::{borrow::BorrowMut, sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicU
 use std::thread;
 
 use parking_lot::Mutex;
-use wgpu;
+use wgpu::{self};
 use winit::window::Window;
 
 use crate::{fm_mio::FmMemoryIO, raw_fb_renderer::RawFBRenderer, fm_interrupt_bus::FmInterruptBus, fb_present_renderer::FramebufferPresentRenderer};
@@ -44,9 +44,9 @@ pub struct GpuWindowEventSink {
 	queue: Arc<wgpu::Queue>,
 	present_chain: GpuPresentChain,
 	present_renderer: FramebufferPresentRenderer,
-	present_counter: Arc<AtomicUsize>,
 	cpu_wakeup: CpuWakeupHandle,
-	sync_interrupt_enable: Arc<AtomicBool>
+	sync_interrupt_enable: Arc<AtomicBool>,
+	sync_interrupt_state: Arc<AtomicBool>
 }
 
 const DEFAULT_CLEAR_COLOR: wgpu::Color = wgpu::Color {r: 0.0, g: 0.0, b: 0.1, a: 1.0};
@@ -66,7 +66,7 @@ impl GpuWindowEventSink {
 				self.last_present_tex = Some(texture);
 			},
 			None => {
-				println!("none");
+				println!("gpu: none");
 				let mut command_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
 					label: Some("GpuWindowEventSink::render_event()")
 				});
@@ -89,17 +89,17 @@ impl GpuWindowEventSink {
 				self.queue.submit(Some(command_encoder.finish()));
 			}
 		}
-		self.present_counter.fetch_add(1, Ordering::SeqCst);
 		if self.sync_interrupt_enable.load(Ordering::SeqCst) {
+			self.sync_interrupt_state.store(true, Ordering::SeqCst);
 			self.cpu_wakeup.cpu_wake();
 		}
 	}
 }
 
 enum GpuPresentState {
-	None,
-	Presenting(wgpu::Texture),
 	Free(wgpu::Texture),
+	Presenting(wgpu::Texture),
+	None,
 }
 
 #[derive(Clone)]
@@ -215,11 +215,11 @@ impl Gpu {
 		};
 		let swap_chain = device.create_swap_chain(&surface, &swap_desc);
 		let sync_interrupt_enable = Arc::new(AtomicBool::new(false));
+		let sync_interrupt_state: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 		mio.set_gpu_interface(GpuPeripheralInterface::new(cmd_queue_tx, sync_interrupt_enable.clone()));
-		let present_counter = Arc::new(AtomicUsize::new(1));
 		let interrupt_output = GpuInterruptOutput::new(
-			present_counter.clone(), 
-			sync_interrupt_enable.clone()
+			sync_interrupt_enable.clone(),
+			sync_interrupt_state.clone()
 		);
 		let present_renderer = FramebufferPresentRenderer::new(&*device, &swap_desc).unwrap();
 		let present_chain = GpuPresentChain::new();
@@ -243,9 +243,9 @@ impl Gpu {
 			swap_chain: swap_chain,
 			present_chain: present_chain,
 			present_renderer: present_renderer,
-			present_counter: present_counter,
 			cpu_wakeup: cpu_wakeup,
-			sync_interrupt_enable: sync_interrupt_enable
+			sync_interrupt_enable: sync_interrupt_enable,
+			sync_interrupt_state: sync_interrupt_state
 		})
 	}
 	
@@ -424,31 +424,16 @@ impl GpuPeripheralInterface {
 
 #[derive(Debug, Clone)]
 pub struct GpuInterruptOutput {
-	cpu_frame: Arc<AtomicUsize>,
-	gpu_frame: Arc<AtomicUsize>,
 	sync_interrupt_state: Arc<AtomicBool>,
 	sync_interrupt_enable: Arc<AtomicBool>
 }
 
 impl GpuInterruptOutput {
-	pub fn new(gpu_frame: Arc<AtomicUsize>, sync_interrupt_enable: Arc<AtomicBool>) -> Self {
+	pub fn new(sync_interrupt_enable: Arc<AtomicBool>, sync_interrupt_state: Arc<AtomicBool>) -> Self {
 		Self {
-			cpu_frame: Arc::new(AtomicUsize::new(0)),
-			gpu_frame,
-			sync_interrupt_state: Arc::new(AtomicBool::new(false)),
+			sync_interrupt_state,
 			sync_interrupt_enable
 		}
-	}
-	
-	pub fn poll_sync_interrupt(&mut self) -> bool {
-		if ! self.sync_interrupt_enable.load(Ordering::SeqCst) {
-			self.sync_interrupt_state.store(false, Ordering::SeqCst);
-			return false
-		}
-		let gpu_frame_num = self.gpu_frame.load(Ordering::SeqCst);
-		let active = self.cpu_frame.load(Ordering::SeqCst) < gpu_frame_num;
-		self.cpu_frame.store(gpu_frame_num, Ordering::SeqCst);
-		self.sync_interrupt_state.fetch_or(active, Ordering::SeqCst) || active
 	}
 	
 	pub fn clear_sync_interrupt(&mut self) {
