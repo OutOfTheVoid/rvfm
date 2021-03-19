@@ -78,6 +78,8 @@ C_START
 #define DSPDMA_ERROR_USAGE_OF_NULL_DEST 15
 #define DSPDMA_ERROR_MEMORY_ACCESS 80
 
+#define DSPDMA_LIB_BAD_PARAMS -1
+
 #define DSPDMA_MEM_ACCESS_ERROR_TYPE_READ 0
 #define DSPDMA_MEM_ACCESS_ERROR_TYPE_WRITE 1
 
@@ -294,6 +296,49 @@ inline static int dspdma_dest_none(uint32_t index) {
 	return DSPDMA_ERROR;
 }
 
+static inline bool dspdma_2src_1dst_op_params(dspdma_op_src_t source_a, dspdma_op_src_t source_b, dspdma_op_dest_t dest) {
+	DSPDMA_PARAM0 = source_a.type;
+	switch (source_a.type) {
+		case DspDma_OpSource_Constant:
+			DSPDMA_PARAM1 = source_a.constant;
+			break;
+		case DspDma_OpSource_IBuff:
+			DSPDMA_PARAM1 = source_a.ibuff;
+			break;
+		case DspDma_OpSource_Source:
+			DSPDMA_PARAM1 = source_a.source;
+			break;
+		default:
+			return false;
+	}
+	DSPDMA_PARAM2 = source_b.type;
+	switch (source_b.type) {
+		case DspDma_OpSource_Constant:
+			DSPDMA_PARAM3 = source_b.constant;
+			break;
+		case DspDma_OpSource_IBuff:
+			DSPDMA_PARAM3 = source_b.ibuff;
+			break;
+		case DspDma_OpSource_Source:
+			DSPDMA_PARAM3 = source_b.source;
+			break;
+		default:
+			return false;
+	}
+	DSPDMA_PARAM4 = dest.type;
+	switch (dest.type) {
+		case DspDma_OpDest_IBuff:
+			DSPDMA_PARAM5 = dest.ibuff;
+			break;
+		case DspDma_OpDest_Dest:
+			DSPDMA_PARAM5 = dest.dest;
+			break;
+		default:
+			return false;
+	}
+	return true;
+}
+
 static inline int dspdma_op_copy (uint32_t op_index, dspdma_op_src_t source, dspdma_op_dest_t dest) {
 	DSPDMA_TYPE = DSPDMA_OP_TYPE_COPY;
 	DSPDMA_INDEX = op_index;
@@ -329,44 +374,8 @@ static inline int dspdma_op_copy (uint32_t op_index, dspdma_op_src_t source, dsp
 static inline int dspdma_op_add (uint32_t op_index, dspdma_op_src_t source_a, dspdma_op_src_t source_b, dspdma_op_dest_t dest) {
 	DSPDMA_TYPE = DSPDMA_OP_TYPE_ADD;
 	DSPDMA_INDEX = op_index;
-	DSPDMA_PARAM0 = source_a.type;
-	switch (source_a.type) {
-		case DspDma_OpSource_Constant:
-			DSPDMA_PARAM1 = source_a.constant;
-			break;
-		case DspDma_OpSource_IBuff:
-			DSPDMA_PARAM1 = source_a.ibuff;
-			break;
-		case DspDma_OpSource_Source:
-			DSPDMA_PARAM1 = source_a.source;
-			break;
-		default:
-			return -1;
-	}
-	DSPDMA_PARAM2 = source_b.type;
-	switch (source_b.type) {
-		case DspDma_OpSource_Constant:
-			DSPDMA_PARAM3 = source_b.constant;
-			break;
-		case DspDma_OpSource_IBuff:
-			DSPDMA_PARAM3 = source_b.ibuff;
-			break;
-		case DspDma_OpSource_Source:
-			DSPDMA_PARAM3 = source_b.source;
-			break;
-		default:
-			return -1;
-	}
-	DSPDMA_PARAM4 = dest.type;
-	switch (dest.type) {
-		case DspDma_OpDest_IBuff:
-			DSPDMA_PARAM5 = dest.ibuff;
-			break;
-		case DspDma_OpDest_Dest:
-			DSPDMA_PARAM5 = dest.dest;
-			break;
-		default:
-			return -1;
+	if (! dspdma_2src_1dst_op_params(source_a, source_b, dest)) {
+		return DSPDMA_LIB_BAD_PARAMS;
 	}
 	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
 	return DSPDMA_ERROR;
@@ -375,44 +384,8 @@ static inline int dspdma_op_add (uint32_t op_index, dspdma_op_src_t source_a, ds
 static inline int dspdma_op_and (uint32_t op_index, dspdma_op_src_t source_a, dspdma_op_src_t source_b, dspdma_op_dest_t dest) {
 	DSPDMA_TYPE = DSPDMA_OP_TYPE_AND;
 	DSPDMA_INDEX = op_index;
-	DSPDMA_PARAM0 = source_a.type;
-	switch (source_a.type) {
-		case DspDma_OpSource_Constant:
-			DSPDMA_PARAM1 = source_a.constant;
-			break;
-		case DspDma_OpSource_IBuff:
-			DSPDMA_PARAM1 = source_a.ibuff;
-			break;
-		case DspDma_OpSource_Source:
-			DSPDMA_PARAM1 = source_a.source;
-			break;
-		default:
-			return -1;
-	}
-	DSPDMA_PARAM2 = source_b.type;
-	switch (source_b.type) {
-		case DspDma_OpSource_Constant:
-			DSPDMA_PARAM3 = source_b.constant;
-			break;
-		case DspDma_OpSource_IBuff:
-			DSPDMA_PARAM3 = source_b.ibuff;
-			break;
-		case DspDma_OpSource_Source:
-			DSPDMA_PARAM3 = source_b.source;
-			break;
-		default:
-			return -1;
-	}
-	DSPDMA_PARAM4 = dest.type;
-	switch (dest.type) {
-		case DspDma_OpDest_IBuff:
-			DSPDMA_PARAM5 = dest.ibuff;
-			break;
-		case DspDma_OpDest_Dest:
-			DSPDMA_PARAM5 = dest.dest;
-			break;
-		default:
-			return -1;
+	if (! dspdma_2src_1dst_op_params(source_a, source_b, dest)) {
+		return DSPDMA_LIB_BAD_PARAMS;
 	}
 	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
 	return DSPDMA_ERROR;
@@ -421,45 +394,7 @@ static inline int dspdma_op_and (uint32_t op_index, dspdma_op_src_t source_a, ds
 static inline int dspdma_op_conditional_copy (uint32_t op_index, dspdma_op_src_t source, dspdma_op_src_t source_cond, dspdma_op_dest_t dest) {
 	DSPDMA_TYPE = DSPDMA_OP_TYPE_CCOPY;
 	DSPDMA_INDEX = op_index;
-	DSPDMA_PARAM0 = source.type;
-	switch (source.type) {
-		case DspDma_OpSource_Constant:
-			DSPDMA_PARAM1 = source.constant;
-			break;
-		case DspDma_OpSource_IBuff:
-			DSPDMA_PARAM1 = source.ibuff;
-			break;
-		case DspDma_OpSource_Source:
-			DSPDMA_PARAM1 = source.source;
-			break;
-		default:
-			return -1;
-	}
-	DSPDMA_PARAM2 = source_cond.type;
-	switch (source_cond.type) {
-		case DspDma_OpSource_Constant:
-			DSPDMA_PARAM3 = source_cond.constant;
-			break;
-		case DspDma_OpSource_IBuff:
-			DSPDMA_PARAM3 = source_cond.ibuff;
-			break;
-		case DspDma_OpSource_Source:
-			DSPDMA_PARAM3 = source_cond.source;
-			break;
-		default:
-			return -1;
-	}
-	DSPDMA_PARAM4 = dest.type;
-	switch (dest.type) {
-		case DspDma_OpDest_IBuff:
-			DSPDMA_PARAM5 = dest.ibuff;
-			break;
-		case DspDma_OpDest_Dest:
-			DSPDMA_PARAM5 = dest.dest;
-			break;
-		default:
-			return -1;
-	}
+	dspdma_2src_1dst_op_params(source, source_cond, dest);
 	DSPDMA_COMMAND = DSPDMA_COMMAND_WRITE_PROGRAM_OP;
 	return DSPDMA_ERROR;
 }

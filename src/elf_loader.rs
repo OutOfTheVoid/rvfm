@@ -1,5 +1,4 @@
 use mem::size_of;
-use simple_endian::{u32le, u16le};
 use rv_vsys::{MemIO, MTimer};
 use std::{collections::HashMap, fmt::Display, fmt, mem};
 use bytemuck::{Pod, Zeroable, from_bytes};
@@ -13,19 +12,19 @@ const ELF_VERSION_CURRENT: u8 = 1;
 #[derive(Clone, Copy)]
 struct ElfHeaderRaw {
 	ident: [u8; EI_NIDENT],
-	object_type: u16le,
-	machine: u16le,
-	version: u32le,
-	entry: u32le,
-	program_header_offset: u32le,
-	section_header_offset: u32le,
-	flags: u32le,
-	header_size: u16le,
-	program_header_entry_size: u16le,
-	program_header_entry_count: u16le,
-	section_header_entry_size: u16le,
-	section_header_entry_count: u16le,
-	section_name_table_section_index: u16le,
+	object_type: u16,
+	machine: u16,
+	version: u32,
+	entry: u32,
+	program_header_offset: u32,
+	section_header_offset: u32,
+	flags: u32,
+	header_size: u16,
+	program_header_entry_size: u16,
+	program_header_entry_count: u16,
+	section_header_entry_size: u16,
+	section_header_entry_count: u16,
+	section_name_table_section_index: u16,
 }
 
 unsafe impl Zeroable for ElfHeaderRaw {}
@@ -122,23 +121,21 @@ struct ElfHeader {
 
 impl ElfHeader {
 	pub fn from_raw(raw: &ElfHeaderRaw) -> Self {
-		unsafe {
-			ElfHeader {
-				ident: raw.ident,
-				object_type: ElfObjectType::from_u16(raw.object_type.to_native()),
-				machine_type: ElfMachineType::from_u16(raw.machine.to_native()),
-				version: ElfVersion::from_u32(raw.version.to_native()),
-				entry: raw.entry.to_native(),
-				program_header_offset: raw.program_header_offset.to_native(),
-				section_header_offset: raw.section_header_offset.to_native(),
-				flags: raw.flags.to_native(),
-				header_size: raw.header_size.to_native(),
-				program_header_entry_size: raw.program_header_entry_size.to_native(),
-				program_header_entry_count: raw.program_header_entry_count.to_native(),
-				section_header_entry_size: raw.section_header_entry_size.to_native(),
-				section_header_entry_count: raw.section_header_entry_count.to_native(),
-				section_name_table_section_index: raw.section_name_table_section_index.to_native(),
-			}
+		ElfHeader {
+			ident: raw.ident,
+			object_type: ElfObjectType::from_u16(u16::from_le(raw.object_type)),
+			machine_type: ElfMachineType::from_u16(u16::from_le(raw.machine)),
+			version: ElfVersion::from_u32(u32::from_le(raw.version)),
+			entry: u32::from_le(raw.entry),
+			program_header_offset: u32::from_le(raw.program_header_offset),
+			section_header_offset: u32::from_le(raw.section_header_offset),
+			flags: u32::from_le(raw.flags),
+			header_size: u16::from_le(raw.header_size),
+			program_header_entry_size: u16::from_le(raw.program_header_entry_size),
+			program_header_entry_count: u16::from_le(raw.program_header_entry_count),
+			section_header_entry_size: u16::from_le(raw.section_header_entry_size),
+			section_header_entry_count: u16::from_le(raw.section_header_entry_count),
+			section_name_table_section_index: u16::from_le(raw.section_name_table_section_index),
 		}
 	}
 	
@@ -150,16 +147,16 @@ impl ElfHeader {
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct ElfSectionHeaderRaw {
-	name_index: u32le,
-	section_type: u32le,
-	flags: u32le,
-	address: u32le,
-	data_offset: u32le,
-	size: u32le,
-	link_index: u32le,
-	info: u32le,
-	address_align: u32le,
-	entry_size: u32le,
+	name_index: u32,
+	section_type: u32,
+	flags: u32,
+	address: u32,
+	data_offset: u32,
+	size: u32,
+	link_index: u32,
+	info: u32,
+	address_align: u32,
+	entry_size: u32,
 }
 
 unsafe impl Zeroable for ElfSectionHeaderRaw {}
@@ -253,19 +250,17 @@ struct ElfSectionHeader {
 #[allow(dead_code)]
 impl ElfSectionHeader {
 	pub fn from_raw(raw: &ElfSectionHeaderRaw) -> Self {
-		unsafe {
-				ElfSectionHeader {
-				name_index: raw.name_index.to_native(),
-				section_type: ElfSectionType::from_u32(raw.section_type.to_native()),
-				flags: raw.flags.to_native(),
-				address: raw.address.to_native(),
-				data_offset: raw.data_offset.to_native(),
-				size: raw.size.to_native(),
-				link_index: raw.link_index.to_native(),
-				info: raw.info.to_native(),
-				address_align: raw.address_align.to_native(),
-				entry_size: raw.entry_size.to_native(),
-			}
+		ElfSectionHeader {
+			name_index: u32::from_le(raw.name_index),
+			section_type: ElfSectionType::from_u32(u32::from_le(raw.section_type)),
+			flags: u32::from_le(raw.flags),
+			address: u32::from_le(raw.address),
+			data_offset: u32::from_le(raw.data_offset),
+			size: u32::from_le(raw.size),
+			link_index: u32::from_le(raw.link_index),
+			info: u32::from_le(raw.info),
+			address_align: u32::from_le(raw.address_align),
+			entry_size: u32::from_le(raw.entry_size),
 		}
 	}
 }
@@ -273,14 +268,14 @@ impl ElfSectionHeader {
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct ElfProgramHeaderEntryRaw {
-	header_type: u32le,
-	offset: u32le,
-	virt_addr: u32le,
-	phys_addr: u32le,
-	file_size: u32le,
-	mem_size: u32le,
-	flags: u32le,
-	align: u32le,
+	header_type: u32,
+	offset: u32,
+	virt_addr: u32,
+	phys_addr: u32,
+	file_size: u32,
+	mem_size: u32,
+	flags: u32,
+	align: u32,
 }
 
 unsafe impl Zeroable for ElfProgramHeaderEntryRaw {}
@@ -368,17 +363,15 @@ struct ElfProgramHeaderEntry {
 #[allow(dead_code)]
 impl ElfProgramHeaderEntry {
 	pub fn from_raw(raw: &ElfProgramHeaderEntryRaw) -> ElfProgramHeaderEntry {
-		unsafe {
-			ElfProgramHeaderEntry {
-				header_type: ElfProgramHeaderType::from_u32(raw.header_type.to_native()),
-				offset: raw.offset.to_native(),
-				virt_addr: raw.virt_addr.to_native(),
-				phys_addr: raw.phys_addr.to_native(),
-				file_size: raw.file_size.to_native(),
-				mem_size: raw.mem_size.to_native(),
-				flags: raw.flags.to_native(),
-				align: raw.align.to_native()
-			}
+		ElfProgramHeaderEntry {
+			header_type: ElfProgramHeaderType::from_u32(u32::from_le(raw.header_type)),
+			offset: u32::from_le(raw.offset),
+			virt_addr: u32::from_le(raw.virt_addr),
+			phys_addr: u32::from_le(raw.phys_addr),
+			file_size: u32::from_le(raw.file_size),
+			mem_size: u32::from_le(raw.mem_size),
+			flags: u32::from_le(raw.flags),
+			align: u32::from_le(raw.align)
 		}
 	}
 }
@@ -453,12 +446,12 @@ fn load_section_headers(file_data: &[u8], elf_header: &ElfHeader) -> Result<Vec<
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct ElfSymbolRaw {
-	name_index: u32le,
-	value: u32le,
-	size: u32le,
+	name_index: u32,
+	value: u32,
+	size: u32,
 	info: u8,
 	other: u8,
-	section_index: u16le
+	section_index: u16
 }
 
 unsafe impl Zeroable for ElfSymbolRaw {}
@@ -552,15 +545,13 @@ struct ElfSymbol {
 #[allow(dead_code)]
 impl ElfSymbol {
 	pub fn from_raw(raw: &ElfSymbolRaw, name: String) -> Self {
-		unsafe {
-			ElfSymbol {
-				binding: ElfSymbolBinding::from_u32((raw.info >> 4) as u32),
-				sym_type: ElfSymbolType::from_u32((raw.info & 0x0F) as u32),
-				section: ElfSymbolSection::from_u32(raw.section_index.to_native() as u32),
-				value: raw.value.to_native(),
-				size: raw.size.to_native(),
-				name: name
-			}
+		ElfSymbol {
+			binding: ElfSymbolBinding::from_u32((raw.info >> 4) as u32),
+			sym_type: ElfSymbolType::from_u32((raw.info & 0x0F) as u32),
+			section: ElfSymbolSection::from_u32(u16::from_le(raw.section_index) as u32),
+			value: u32::from_le(raw.value),
+			size: u32::from_le(raw.size),
+			name: name
 		}
 	}
 }
@@ -576,7 +567,7 @@ fn symbol_temporary_name(sym_raw: &ElfSymbolRaw) -> String {
 		ElfSymbolType::Proc(val) => format!("$P{:04x}_", val).to_string(),
 		ElfSymbolType::Unknown => "$U_".to_string(),
 	};
-	let sym_section_name = match ElfSymbolSection::from_u32(unsafe {sym_raw.section_index.to_native()} as u32) {
+	let sym_section_name = match ElfSymbolSection::from_u32(u16::from_le(sym_raw.section_index) as u32) {
 		ElfSymbolSection::Absolute => "abs_".to_string(),
 		ElfSymbolSection::Common => "com_".to_string(),
 		ElfSymbolSection::Undefined => "undef_".to_string(),
@@ -605,7 +596,7 @@ fn load_symbol_tables(file_data: &[u8], section_headers: &Vec<ElfSectionHeader>,
 				for s in 0 .. symbol_count {
 					let symbol_address = s_hdr.data_offset + file_entry_size * s;
 					let symbol_raw: ElfSymbolRaw = *from_bytes(&file_data[symbol_address as usize..(symbol_address + mem_entry_size) as usize]);
-					let symbol_name = string_tables.get_symbol_name(s_hdr.link_index, unsafe {symbol_raw.name_index.to_native()}).unwrap_or(symbol_temporary_name(&symbol_raw));
+					let symbol_name = string_tables.get_symbol_name(s_hdr.link_index, u32::from_le(symbol_raw.name_index)).unwrap_or(symbol_temporary_name(&symbol_raw));
 					let symbol = ElfSymbol::from_raw(&symbol_raw, symbol_name.clone());
 					symbol_map.insert(symbol_name.clone(), symbol);
 				}
@@ -620,7 +611,7 @@ fn load_symbol_tables(file_data: &[u8], section_headers: &Vec<ElfSectionHeader>,
 				for s in 0 .. symbol_count {
 					let symbol_address = s_hdr.data_offset + file_entry_size * s;
 					let symbol_raw: ElfSymbolRaw = *from_bytes(&file_data[symbol_address as usize..(symbol_address + mem_entry_size) as usize]);
-					let symbol_name = string_tables.get_symbol_name(s_hdr.link_index, unsafe {symbol_raw.name_index.to_native()}).unwrap_or(symbol_temporary_name(&symbol_raw));
+					let symbol_name = string_tables.get_symbol_name(s_hdr.link_index, u32::from_le(symbol_raw.name_index)).unwrap_or(symbol_temporary_name(&symbol_raw));
 					let symbol = ElfSymbol::from_raw(&symbol_raw, symbol_name.clone());
 					symbol_map.insert(symbol_name.clone(), symbol);
 				}

@@ -52,11 +52,11 @@ static int gen_triangle_wave(int * ph, int frequency) {
 	phase += frequency;
 	phase %= SOUND_SAMPLE_RATE;
 	*ph = phase;
-	int t = phase / (SOUND_SAMPLE_RATE/2000);
-	if (t > 1000) {
-		return 1500 - t;
+	int t = phase / (SOUND_SAMPLE_RATE/4000);
+	if (t > 2000) {
+		return 3000 - t;
 	} else {
-		return t - 500;
+		return t - 1000;
 	}
 }
 

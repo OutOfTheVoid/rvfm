@@ -9,7 +9,6 @@ edition = "2018"
 [dependencies]
 rv_vsys = { path = "rv_vsys", features=[] }
 byteorder = "1"
-simple_endian = "0.2.0"
 bytemuck = "1.5"
 image = "0.23"
 winit = "0.22"

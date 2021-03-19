@@ -53,10 +53,6 @@ const DEFAULT_CLEAR_COLOR: wgpu::Color = wgpu::Color {r: 0.0, g: 0.0, b: 0.1, a:
 
 impl GpuWindowEventSink {
 	pub fn render_event(&mut self) {
-		self.present_counter.fetch_add(1, Ordering::SeqCst);
-		if self.sync_interrupt_enable.load(Ordering::SeqCst) {
-			self.cpu_wakeup.cpu_wake();
-		}
 		let mut last_swap = None;
 		std::mem::swap(&mut self.last_present_tex, &mut last_swap);
 		match self.present_chain.present_swap(last_swap) {
@@ -92,6 +88,10 @@ impl GpuWindowEventSink {
 				}
 				self.queue.submit(Some(command_encoder.finish()));
 			}
+		}
+		self.present_counter.fetch_add(1, Ordering::SeqCst);
+		if self.sync_interrupt_enable.load(Ordering::SeqCst) {
+			self.cpu_wakeup.cpu_wake();
 		}
 	}
 }

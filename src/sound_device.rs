@@ -1,4 +1,4 @@
-use cpal::{self, traits::{DeviceTrait, HostTrait, StreamTrait}};
+use cpal::{self, SupportedStreamConfigRange, traits::{DeviceTrait, HostTrait, StreamTrait}};
 use rv_vsys::{CpuWakeupHandle, MemIO, MemReadResult, MemWriteResult};
 use core::f32;
 use std::{mem::{self}, sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering}}};
@@ -93,6 +93,190 @@ impl SoundInterruptOutput {
 
 const FRAME_SIZE: usize = 256;
 const CHANNEL_COUNT: usize = 2;
+const SAMPLE_RATE: u32 = 44100;
+
+fn sample_rate_score(c: &cpal::SupportedStreamConfigRange) -> i32 {
+	if c.min_sample_rate().0 <= SAMPLE_RATE && c.max_sample_rate().0 >= SAMPLE_RATE {
+		2
+	} else if c.min_sample_rate().0 <= (SAMPLE_RATE * 2) && c.max_sample_rate().0 >= (SAMPLE_RATE * 2) {
+		1
+	} else {
+		0
+	}
+}
+
+fn buffer_size_score(c: &cpal::SupportedStreamConfigRange) -> i32 {
+	match c.buffer_size() {
+		cpal::SupportedBufferSize::Range {min, max} => {
+			if FRAME_SIZE as u32 >= *min && FRAME_SIZE as u32 <= *max {
+				1
+			} else {
+				i32::MIN
+			}
+		}
+		cpal::SupportedBufferSize::Unknown => i32::MIN
+	}
+}
+
+fn format_score(c: &cpal::SupportedStreamConfigRange) -> u32 {
+	match c.sample_format() {
+		cpal::SampleFormat::I16 => 2,
+		cpal::SampleFormat::U16 => 1,
+		cpal::SampleFormat::F32 => 0,
+	}
+}
+
+fn channel_score(c: &cpal::SupportedStreamConfigRange) -> i32 {
+	if c.channels() >= 2 {
+		1
+	} else {
+		0
+	}
+}
+
+fn b_is_better_sound_config(a: &Option<cpal::SupportedStreamConfigRange>, b: &cpal::SupportedStreamConfigRange) -> bool {
+	match a {
+		None => true,
+		Some(a) => {
+			if channel_score(b) > channel_score(a) {
+				true
+			} else if channel_score(a) > channel_score(b) {
+				false
+			} else {
+				if sample_rate_score(b) > sample_rate_score(a) {
+					true
+				} else if sample_rate_score(b) < sample_rate_score(a) {
+					false
+				} else {
+					if buffer_size_score(b) > buffer_size_score(a) {
+						true
+					} else if buffer_size_score(a) > buffer_size_score(b) {
+						false
+					} else {
+						format_score(b) > format_score(a)
+					}
+				}
+			}
+		}
+	}
+}
+
+fn pick_sound_format(device: &cpal::Device) -> Option<(cpal::StreamConfig, cpal::SampleFormat, bool)> {
+	match device.supported_output_configs() {
+		Ok(configs) => {
+			let mut best_config = None;
+			for config in configs {
+				let new_best_config = Some(if b_is_better_sound_config(&best_config, &config) {
+					config
+				} else {
+					best_config.clone().unwrap()
+				});
+				best_config = new_best_config;
+			}
+			match best_config {
+				Some(best_config) => {
+					let (sample_rate, double_rate) = if best_config.min_sample_rate().0 > SAMPLE_RATE {
+						(cpal::SampleRate(SAMPLE_RATE * 2), true)
+					} else {
+						(cpal::SampleRate(SAMPLE_RATE), false)
+					};
+					Some(
+						(
+							cpal::StreamConfig {
+								channels: CHANNEL_COUNT as cpal::ChannelCount,
+								sample_rate: sample_rate,
+								buffer_size: cpal::BufferSize::Fixed(if double_rate {FRAME_SIZE * 2} else {FRAME_SIZE} as cpal::FrameCount),
+							},
+							best_config.sample_format(),
+							double_rate
+						)
+					)
+				},
+				None => None
+			}
+		},
+		_ => None
+	}
+}
+
+trait FromNativeSample {
+	fn from_native_sample(v: i16) -> Self;
+	const SAMPLE_ZERO: Self;
+}
+
+impl FromNativeSample for i16 {
+	fn from_native_sample(v: i16) -> Self {
+		v
+	}
+	const SAMPLE_ZERO: Self = 0;
+}
+
+impl FromNativeSample for u16 {
+	fn from_native_sample(v: i16) -> Self {
+		((v as i32) + 32768) as u16
+	}
+	const SAMPLE_ZERO: Self = 32768;
+}
+
+impl FromNativeSample for f32 {
+	fn from_native_sample(v: i16) -> Self {
+		if v >= 0 {
+			f32::from(v) / (f32::from(i16::MAX))
+		} else {
+			f32::from(v) / -(f32::from(i16::MIN))
+		}
+	}
+	const SAMPLE_ZERO: Self = 0.0;
+}
+
+fn sound_callback<T: FromNativeSample> (data: &mut [T], cb_enabled: &AtomicBool, cb_framebuffer: &mut Option<AudioFrame>, cb_io_framebuffer: &Atom<AudioFrame>, cb_audio_frame: &AtomicUsize, cb_interrupt_enabled: &AtomicBool, cpu_wake_handle: &mut CpuWakeupHandle, double_rate: bool) {
+	for i in 0 .. data.len() {
+		data[i] = T::SAMPLE_ZERO;
+	}
+	if cb_enabled.load(Ordering::SeqCst) {
+		let mut cb_fb_swap = None;
+		std::mem::swap(&mut cb_fb_swap, cb_framebuffer);
+		let cb_fb_swap = cb_fb_swap.unwrap();
+		let mut cb_fb_swap = Some(cb_io_framebuffer.swap(cb_fb_swap, Ordering::SeqCst).unwrap());
+		std::mem::swap(&mut cb_fb_swap, cb_framebuffer);
+		let framebuffer = cb_framebuffer.as_ref().unwrap();
+		{
+			let frame_data = &framebuffer.data;
+			if double_rate {
+				for i in 0 .. FRAME_SIZE {
+					for c in 0 .. CHANNEL_COUNT {
+						data[i * 2 * CHANNEL_COUNT + c] = T::from_native_sample(frame_data[i * CHANNEL_COUNT + c]);
+						data[i * 2 * CHANNEL_COUNT + c + CHANNEL_COUNT] = T::from_native_sample(frame_data[i * CHANNEL_COUNT + c]);
+					}
+				}
+			} else {
+				for i in 0 .. FRAME_SIZE {
+					for c in 0 .. CHANNEL_COUNT {
+						data[i * CHANNEL_COUNT + c] = T::from_native_sample(frame_data[i * CHANNEL_COUNT + c]);
+					}
+				}
+			}
+		}
+		cb_audio_frame.fetch_add(1, Ordering::SeqCst);
+		if cb_interrupt_enabled.load(Ordering::SeqCst) {
+			cpu_wake_handle.cpu_wake();
+		}
+	} else {
+		if double_rate {
+			for i in 0 .. FRAME_SIZE * CHANNEL_COUNT * 2 {
+				data[i] = T::SAMPLE_ZERO;
+			}
+		} else {
+			for i in 0 .. FRAME_SIZE * CHANNEL_COUNT {
+				data[i] = T::SAMPLE_ZERO;
+			}
+		}
+	}
+}
+
+fn sound_error_callback() {
+	println!("Sound ERROR!");
+}
 
 impl SoundDevice {
 	fn new_framebuffer() -> AudioFrame {
@@ -139,37 +323,37 @@ impl SoundDevice {
 		let cb_audio_frame = audio_frame.clone();
 		let cb_enabled = enabled.clone();
 		let cb_interrupt_enabled = interrupt_enabled.clone();
-		let stream = device.build_output_stream(&cpal::StreamConfig {
-			channels: 2,
-			sample_rate: cpal::SampleRate(44100),
-			buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
-		}, move |data: &mut [f32], _| {
-			if cb_enabled.load(Ordering::SeqCst) {
-				let mut cb_fb_swap = None;
-				std::mem::swap(&mut cb_fb_swap, &mut cb_framebuffer);
-				let cb_fb_swap = cb_fb_swap.unwrap();
-				let mut cb_fb_swap = Some(cb_io_framebuffer.swap(cb_fb_swap, Ordering::SeqCst).unwrap());
-				std::mem::swap(&mut cb_fb_swap, &mut cb_framebuffer);
-				let framebuffer = cb_framebuffer.as_ref().unwrap();
-				{
-					let frame_data = &framebuffer.data;
-					for i in 0 .. FRAME_SIZE * CHANNEL_COUNT {
-						data[i] = f32::from(frame_data[i]) * 0.00003051757;
-					}
-				}
-				cb_audio_frame.fetch_add(1, Ordering::SeqCst);
-				if cb_interrupt_enabled.load(Ordering::SeqCst) {
-					cpu_wake_handle.cpu_wake();
-				}
-			} else {
-				for i in 0 .. FRAME_SIZE * CHANNEL_COUNT {
-					data[i] = 0.0;
-				}
+		let (config, sample_format, double_rate) = match pick_sound_format(&device) {
+			Some(format) => format,
+			None => {
+				return Result::Err("Unable to find suitable output format for sound device!".to_string());
 			}
-		}, |_| {
-		}).unwrap();
+		};
+		println!("cpal config: {:?}, format: {:?}, double_rate: {}", config, sample_format, double_rate);
+		let stream = match sample_format {
+			cpal::SampleFormat::I16 => {
+				device.build_output_stream(&config, move |data: &mut [i16], _| {
+					sound_callback(data, &cb_enabled, &mut cb_framebuffer, &cb_io_framebuffer, &cb_audio_frame, &cb_interrupt_enabled, &mut cpu_wake_handle, double_rate);
+				}, |_| {
+					sound_error_callback();
+				}).unwrap()
+			},
+			cpal::SampleFormat::U16 => {
+				device.build_output_stream(&config, move |data: &mut [u16], _| {
+					sound_callback(data, &cb_enabled, &mut cb_framebuffer, &cb_io_framebuffer, &cb_audio_frame, &cb_interrupt_enabled, &mut cpu_wake_handle, double_rate);
+				}, |_| {
+					sound_error_callback();
+				}).unwrap()
+			},
+			cpal::SampleFormat::F32 => {
+				device.build_output_stream(&config, move |data: &mut [f32], _| {
+					sound_callback(data, &cb_enabled, &mut cb_framebuffer, &cb_io_framebuffer, &cb_audio_frame, &cb_interrupt_enabled, &mut cpu_wake_handle, double_rate);
+				}, |_| {
+					sound_error_callback();
+				}).unwrap()
+			}
+		};
 		stream.play().unwrap();
-		std::thread::sleep(std::time::Duration::from_secs(2));
 		let int_audio_frame = audio_frame.clone();
 		let int_interrupt_enabled = interrupt_enabled.clone();
 		interrupt_bus.set_sound_interrupt(SoundInterruptOutput::new(int_audio_frame, int_interrupt_enabled));

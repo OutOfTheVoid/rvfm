@@ -15,7 +15,7 @@ C_START
 #define SOUND_INTERRUPT_STATE *((volatile uint32_t *) 0xF0030004)
 
 #define SOUND_FRAME_SIZE 256
-#define SOUND_SAMPLE_RATE 48000
+#define SOUND_SAMPLE_RATE 44100
 #define SOUND_CHANNEL_COUNT 2
 
 static inline void sound_enable() {

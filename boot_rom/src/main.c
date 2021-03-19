@@ -114,8 +114,8 @@ void main() {
 	debug_print_string((const char *) cart_metadata.name);
 	
 	while(true) {
-		gpu_vsync_wait();
 		draw();
+		gpu_vsync_wait();
 		gpu_mmfb_present();
 	}
 }
