@@ -13,6 +13,7 @@ mod mtimer;
 mod math_accel;
 mod cart_loader;
 mod sound_out;
+mod input;
 
 use application_gui::ApplicationGUI;
 

@@ -1,4 +1,4 @@
-use winit::{self, dpi::PhysicalSize, event::{Event, WindowEvent}, event_loop::{
+use winit::{self, dpi::PhysicalSize, event::{Event, WindowEvent, VirtualKeyCode}, event_loop::{
 		EventLoop,
 		ControlFlow,
 		EventLoopProxy
@@ -6,7 +6,7 @@ use winit::{self, dpi::PhysicalSize, event::{Event, WindowEvent}, event_loop::{
 		WindowBuilder
 	}};
 	
-use crate::{application_core::ApplicationCore, fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO, gpu, sound_out::SoundOutPeripheral};
+use crate::{application_core::ApplicationCore, fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO, gpu, input::{InputEventSink, InputPeripheral}, sound_out::SoundOutPeripheral};
 use rv_vsys::CpuWakeupHandle;
 
 use std::{sync::mpsc, sync::mpsc::{TryRecvError, Sender, Receiver}, thread};
@@ -45,6 +45,7 @@ impl ApplicationGUI {
 		let mut interrupt_bus = FmInterruptBus::new();
 		let logic_interrupt_bus = interrupt_bus.clone();
 		let mut mio = FmMemoryIO::new(interrupt_bus.clone());
+		let mut input_sink = InputPeripheral::new(&mut mio);
 		let logic_mio = mio.clone();
 		let (gpu, mut gpu_event_sink) = futures::executor::block_on(gpu::Gpu::new(&window, &mut mio, &mut interrupt_bus, cpu0_wakeup.clone()));
 		let _application_gui = ApplicationGUI {
@@ -55,7 +56,7 @@ impl ApplicationGUI {
 		gpu.run();
 		let _logic_thread = thread::spawn(move || {
 			// start sound device from non-main thread to support winit/windows
-			let sound_out = SoundOutPeripheral::new(cpu1_wakeup.clone(), &mut interrupt_bus, &mut mio, None, None).unwrap();
+			SoundOutPeripheral::new(cpu1_wakeup.clone(), &mut interrupt_bus, &mut mio, None, None).unwrap();
 			let app_core = ApplicationCore::new(logic_mio, logic_interrupt_bus, cpu0_wakeup, cpu1_wakeup);
 			app_core.run();
 		});
@@ -73,6 +74,15 @@ impl ApplicationGUI {
 				Event::WindowEvent{event: WindowEvent::CloseRequested, ..} => {
 					*control_flow = ControlFlow::Exit;
 				},
+				Event::WindowEvent{event: WindowEvent::KeyboardInput{input, ..}, ..} => {
+					if let Some(vkey) = input.virtual_keycode {
+						let down = match input.state {
+							winit::event::ElementState::Pressed => true,
+							winit::event::ElementState::Released => false
+						};
+						input_sink.vkey_event(vkey, down);
+					}
+				}
 				Event::UserEvent(()) => {
 					while match gui_inbox.try_recv() {
 						Ok(control_message) => {
@@ -92,9 +102,7 @@ impl ApplicationGUI {
 					}{}
 					*control_flow = ControlFlow::Poll;
 				},
-				_ => {
-					*control_flow = ControlFlow::Poll;
-				}
+				_ => {}
 			}
 		});
 	}

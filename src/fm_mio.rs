@@ -5,7 +5,7 @@ use atomic_counter::{AtomicCounter, ConsistentCounter};
 
 use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{cart_loader::CartLoaderPeripheral, cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, math_accel::MathAccelerator, mtimer::{MTimerPeripheral}, sound_out::SoundOutPeripheral};
+use crate::{cart_loader::CartLoaderPeripheral, cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, input::InputPeripheral, math_accel::MathAccelerator, mtimer::{MTimerPeripheral}, sound_out::SoundOutPeripheral};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
@@ -111,7 +111,8 @@ pub struct FmMemoryIO {
 	hart_id: u32,
 	mtimers: Arc<[Arc<MTimerPeripheral>]>,
 	math_accelerators: Arc<[Arc<MathAccelerator>]>,
-	cart_loader_device: Arc<OnceCell<CartLoaderPeripheral>>
+	cart_loader_device: Arc<OnceCell<CartLoaderPeripheral>>,
+	input: Arc<OnceCell<InputPeripheral>>
 }
 
 unsafe impl Send for FmMemoryIO {
@@ -160,6 +161,7 @@ impl Clone for FmMemoryIO {
 			mtimers: self.mtimers.clone(),
 			math_accelerators: self.math_accelerators.clone(),
 			cart_loader_device: self.cart_loader_device.clone(),
+			input: self.input.clone()
 		}
 	}
 }
@@ -196,6 +198,7 @@ impl FmMemoryIO {
 			mtimers: mtimers.into(),
 			math_accelerators: math_accelerators.into(),
 			cart_loader_device: Arc::new(OnceCell::default()),
+			input: Arc::new(OnceCell::default()),
 		}
 	}
 	
@@ -393,6 +396,10 @@ impl FmMemoryIO {
 	pub fn set_cart_loader(&mut self, loader_peripheral: CartLoaderPeripheral) {
 		self.cart_loader_device.set(loader_peripheral).unwrap();
 	}
+	
+	pub fn set_input(&mut self, input_peripheral: InputPeripheral) {
+		self.input.set(input_peripheral).unwrap();
+	}
 }
 
 impl MemIO<MTimerPeripheral> for FmMemoryIO {
@@ -502,6 +509,10 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 					},
 					8 => {
 						let device = self.cart_loader_device.clone();
+						device.get().unwrap().read_32(peripheral_offset)
+					},
+					9 => {
+						let device = self.input.clone();
 						device.get().unwrap().read_32(peripheral_offset)
 					},
 					_ => {
@@ -639,6 +650,10 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 					},
 					8 => {
 						let device = self.cart_loader_device.clone();
+						device.get().unwrap().write_32(peripheral_offset, value)
+					},
+					9 => {
+						let device = self.input.clone();
 						device.get().unwrap().write_32(peripheral_offset, value)
 					},
 					_ => {

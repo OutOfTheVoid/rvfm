@@ -10,6 +10,7 @@
 #include <gpu/mmfb.h>
 #include <gpu/vsync.h>
 #include <blit.h>
+#include <input.h>
 
 #include "cart_loader.h"
 
@@ -49,20 +50,25 @@ void draw_cart_icon(volatile cart_metadata_t * cart, int x, int y) {
 	blit_sprite_cutout(& cart_sprite_buff, & mmfb_buff, x, y);
 }
 
-int frame = 0;
+int x = 0;
+int y = 0;
 
 void draw() {
 	gpu_mmfb_clear(mmfb, CLEAR_COLOR);
 	if (cart_metadata_loaded) {
-		frame += 2;
-		frame %= 640;
-		if (frame <= 320) {
-			int32_t x = frame - 64;
-			draw_cart_icon(&cart_metadata, x, 64);
-		} else {
-			int32_t x = 640 - frame - 64;
-			draw_cart_icon(&cart_metadata, x, 64);
+		if (input_key_down(InputKey_Up)) {
+			y --;
 		}
+		if (input_key_down(InputKey_Down)) {
+			y ++;
+		}
+		if (input_key_down(InputKey_Left)) {
+			x --;
+		}
+		if (input_key_down(InputKey_Right)) {
+			x ++;
+		}
+		draw_cart_icon(&cart_metadata, x, y);
 	}
 }
 
