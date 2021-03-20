@@ -78,10 +78,11 @@ Sound Peripheral
 Offset | Name              | Description
 -----------------------------------------------------------------------
 0x0000 | Enable            | Sound Enable
-0x0004 | Frame Counter     | Sound Frame Counter
-0x0008 | Int Enable        | Sound Interrupt Enable
-0x000C | Frame Pointer     | Sound Frame Pointer
-0x0010 | Copy Trigger      | Sound Frame Copy Trigger
+0x0004 | FIFO Length       | Sound FIFO Length
+0x0008 | FIFO Int Enable   | Sound Interrupt Enable
+0x000C | FIFO Fill Pointer | Sound FIFO Fill Source Pointer
+0x0010 | FIFO Fill Trigger | Sound FIFO Fill Trigger
+0x0010 | FIFO Read Count   | Sound FIFO Last frame read count
 
 
 MTimer Peripheral
