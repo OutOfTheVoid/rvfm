@@ -5,7 +5,7 @@ use atomic_counter::{AtomicCounter, ConsistentCounter};
 
 use rv_vsys::{MemIO, MemReadResult, MemWriteResult};
 use byteorder::{LE, ByteOrder};
-use crate::{cart_loader::CartLoaderPeripheral, cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, math_accel::MathAccelerator, mtimer::{MTimerPeripheral}, sound_device::SoundDevice};
+use crate::{cart_loader::CartLoaderPeripheral, cpu1_controller::Cpu1Controller, debug_device::DebugDevice, dsp_dma::{DspDmaDevice, DspDmaDeviceInterface}, fm_interrupt_bus::FmInterruptBus, gpu::GpuPeripheralInterface, math_accel::MathAccelerator, mtimer::{MTimerPeripheral}, sound_out::SoundOutPeripheral};
 use once_cell::sync::OnceCell;
 
 const RAM_SIZE: usize = 0x1000_0000;
@@ -102,7 +102,7 @@ pub struct FmMemoryIO {
 	dsp_dma_device: Arc<DspDmaDeviceInterface>,
 	interrupt_bus_device: FmInterruptBus,
 	cpu1_controller_device: Arc<OnceCell<Cpu1Controller>>,
-	sound_device: Arc<OnceCell<SoundDevice>>,
+	sound_out: Arc<OnceCell<SoundOutPeripheral>>,
 	mem_lock_hold_d: UnsafeCell<MemLockHold>,
 	mem_lock_hold_i: UnsafeCell<MemLockHold>,
 	write_cycle_counter: Arc<ConsistentCounter>,
@@ -150,7 +150,7 @@ impl Clone for FmMemoryIO {
 			dsp_dma_device: self.dsp_dma_device.clone(),
 			interrupt_bus_device: self.interrupt_bus_device.clone(),
 			cpu1_controller_device: self.cpu1_controller_device.clone(),
-			sound_device: self.sound_device.clone(),
+			sound_out: self.sound_out.clone(),
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: self.write_cycle_counter.clone(),
@@ -186,7 +186,7 @@ impl FmMemoryIO {
 			dsp_dma_device: Arc::new(DspDmaDeviceInterface::new(DspDmaDevice::new())),
 			interrupt_bus_device: interrupt_bus,
 			cpu1_controller_device: Arc::new(OnceCell::new()),
-			sound_device: Arc::new(OnceCell::default()),
+			sound_out: Arc::new(OnceCell::default()),
 			mem_lock_hold_d: UnsafeCell::new(MemLockHold::Clear),
 			mem_lock_hold_i: UnsafeCell::new(MemLockHold::Clear),
 			write_cycle_counter: Arc::new(ConsistentCounter::new(1)),
@@ -386,8 +386,8 @@ impl FmMemoryIO {
 		self.cpu1_controller_device.set(controller).unwrap();
 	}
 	
-	pub fn set_sound_device(&mut self, sound_device: SoundDevice) {
-		self.sound_device.set(sound_device).unwrap();
+	pub fn set_sound_out(&mut self, sound_out: SoundOutPeripheral) {
+		self.sound_out.set(sound_out).unwrap();
 	}
 	
 	pub fn set_cart_loader(&mut self, loader_peripheral: CartLoaderPeripheral) {
@@ -482,7 +482,7 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 						self.cpu1_controller_device.get().unwrap().read_32(peripheral_offset)
 					},
 					5 => {
-						self.sound_device.get().unwrap().read_32(peripheral_offset)
+						self.sound_out.get().unwrap().read_32(peripheral_offset)
 					},
 					6 => {
 						if self.hart_id as usize <= HART_COUNT {
@@ -618,7 +618,7 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 						self.cpu1_controller_device.get().unwrap().clone().write_32(peripheral_offset, value)
 					},
 					5 => {
-						let device = self.sound_device.clone();
+						let device = self.sound_out.clone();
 						device.get().unwrap().write_32(self, peripheral_offset, value)
 					},
 					6 => {

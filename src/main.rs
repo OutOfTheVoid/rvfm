@@ -9,10 +9,10 @@ mod fm_interrupt_bus;
 mod fb_present_renderer;
 mod dsp_dma;
 mod cpu1_controller;
-mod sound_device;
 mod mtimer;
 mod math_accel;
 mod cart_loader;
+mod sound_out;
 
 use application_gui::ApplicationGUI;
 
