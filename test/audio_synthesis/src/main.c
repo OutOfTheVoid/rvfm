@@ -4,19 +4,19 @@
 #include <core2.h>
 #include <sound.h>
 
-volatile int sound_interrupt_waiting = 0;
+volatile int sound_fifo_interrupt_waiting = 0;
 
 void ATTR_INTERRUPT interrupt_handler() {
-	if (sound_interrupt_state()) {
-		sound_interrupt_waiting = 0;
-		sound_interrupt_ack();
+	if (sound_fifo_interrupt_state()) {
+		sound_fifo_interrupt_waiting = 0;
+		sound_fifo_interrupt_ack();
 	}
 	clear_pending_interrupts();
 }
 
 void sound_interrupt_wait() {
-	sound_interrupt_waiting = 1;
-	while(sound_interrupt_waiting) {
+	sound_fifo_interrupt_waiting = 1;
+	while(sound_fifo_interrupt_waiting) {
 		wfi();
 	}
 }
@@ -27,7 +27,7 @@ void init_sound_interrupt() {
 	clear_pending_interrupts();
 	enable_interrupts();
 	enable_external_interrupts();
-	sound_interrupt_enable();
+	sound_fifo_interrupt_enable();
 }
 
 void main() {
@@ -63,8 +63,8 @@ void core2_main() {
 	int phase_2 = 0;
 	int phase_3 = 0;
 	
-	int16_t buffer[SOUND_FRAME_SIZE * SOUND_CHANNEL_COUNT];
-	for (int i = 0; i < SOUND_FRAME_SIZE * SOUND_CHANNEL_COUNT; i ++) {
+	int16_t buffer[SOUND_FIFO_MIN_FILL * SOUND_CHANNEL_COUNT];
+	for (int i = 0; i < SOUND_FIFO_MIN_FILL * SOUND_CHANNEL_COUNT; i ++) {
 		buffer[i] = 0;
 	}
 	
@@ -72,8 +72,8 @@ void core2_main() {
 	sound_enable();
 	while (1) {
 		sound_interrupt_wait();
-		sound_frame_submit(buffer);
-		for (int i = 0; i < SOUND_FRAME_SIZE; i ++) {
+		sound_fill_fifo(buffer, SOUND_FIFO_MIN_FILL * SOUND_CHANNEL_COUNT);
+		for (int i = 0; i < SOUND_FIFO_MIN_FILL; i ++) {
 			int s = 
 				get_triangle_wave(& phase_1, 262) + // C4
 				get_triangle_wave(& phase_2, 330) + // E4
