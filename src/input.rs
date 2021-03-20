@@ -106,32 +106,32 @@ impl InputEventSink {
 			if down {
 				match key_index {
 					0 ..= 31 => {
-						self.key_change_events_0_31.fetch_or(1 << key_index, std::sync::atomic::Ordering::SeqCst);
 						self.key_states_0_31.fetch_or(1 << key_index, std::sync::atomic::Ordering::SeqCst);
+						self.key_change_events_0_31.fetch_or(1 << key_index, std::sync::atomic::Ordering::SeqCst);
 					},
 					32 ..= 63 => {
-						self.key_change_events_32_63.fetch_or(1 << (key_index - 32), std::sync::atomic::Ordering::SeqCst);
 						self.key_states_32_63.fetch_or(1 << (key_index - 32), std::sync::atomic::Ordering::SeqCst);
+						self.key_change_events_32_63.fetch_or(1 << (key_index - 32), std::sync::atomic::Ordering::SeqCst);
 					},
 					64 ..= 95 => {
-						self.key_change_events_64_95.fetch_or(1 << (key_index - 64), std::sync::atomic::Ordering::SeqCst);
 						self.key_states_64_95.fetch_or(1 << (key_index - 64), std::sync::atomic::Ordering::SeqCst);
+						self.key_change_events_64_95.fetch_or(1 << (key_index - 64), std::sync::atomic::Ordering::SeqCst);
 					},
 					_ => panic!("unknown key index")
 				}
 			} else {
 				match key_index {
 					0 ..= 31 => {
-						self.key_change_events_0_31.fetch_or(1 << key_index, std::sync::atomic::Ordering::SeqCst);
 						self.key_states_0_31.fetch_and(! (1 << key_index), std::sync::atomic::Ordering::SeqCst);
+						self.key_change_events_0_31.fetch_or(1 << key_index, std::sync::atomic::Ordering::SeqCst);
 					},
 					32 ..= 63 => {
-						self.key_change_events_32_63.fetch_or(1 << (key_index - 32), std::sync::atomic::Ordering::SeqCst);
 						self.key_states_32_63.fetch_and(! (1 << (key_index - 32)), std::sync::atomic::Ordering::SeqCst);
+						self.key_change_events_32_63.fetch_or(1 << (key_index - 32), std::sync::atomic::Ordering::SeqCst);
 					},
 					64 ..= 95 => {
-						self.key_change_events_64_95.fetch_or(1 << (key_index - 64), std::sync::atomic::Ordering::SeqCst);
 						self.key_states_64_95.fetch_and(! (1 << (key_index - 64)), std::sync::atomic::Ordering::SeqCst);
+						self.key_change_events_64_95.fetch_or(1 << (key_index - 64), std::sync::atomic::Ordering::SeqCst);
 					},
 					_ => panic!("unknown key index")
 				}
@@ -190,15 +190,15 @@ impl InputPeripheral {
 	pub fn write_32(&self, offset: u32, value: u32) -> MemWriteResult {
 		match offset {
 			REG_KEY_EVENTS_0_31 => {
-				self.key_change_events_0_31.fetch_nand(value, Ordering::SeqCst);
+				self.key_change_events_0_31.fetch_and(! value, Ordering::SeqCst);
 				MemWriteResult::Ok
 			},
 			REG_KEY_EVENTS_32_63 => {
-				self.key_change_events_32_63.fetch_nand(value, Ordering::SeqCst);
+				self.key_change_events_32_63.fetch_and(! value, Ordering::SeqCst);
 				MemWriteResult::Ok
 			},
 			REG_KEY_EVENTS_64_95 => {
-				self.key_change_events_64_95.fetch_nand(value, Ordering::SeqCst);
+				self.key_change_events_64_95.fetch_and(! value, Ordering::SeqCst);
 				MemWriteResult::Ok
 			},
 			REG_CLEAR_KEY_EVENTS => {
