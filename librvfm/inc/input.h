@@ -10,6 +10,10 @@
 #define INPUT_KEY_STATES_32_TO_63 *((volatile uint32_t *) 0xF0090010)
 #define INPUT_KEY_STATES_64_TO_95 *((volatile uint32_t *) 0xF0090014)
 
+#define INPUT_MOUSE_EVENTS *((volatile uint32_t *) 0xF0090020)
+#define INPUT_MOUSE_X *((volatile uint32_t *) 0xF0090024)
+#define INPUT_MOUSE_Y *((volatile uint32_t *) 0xF0090028)
+
 typedef enum {
 	InputKey_Escape = 0,
 	InputKey_Back = 1,

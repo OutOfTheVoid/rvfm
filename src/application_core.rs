@@ -2,7 +2,7 @@ use std::{env::args, time::Duration};
 use std::fs::File;
 use std::io::Read;
 
-use crate::{cart_loader::{CartLoader, CartLoaderCpuBarrier}, cpu1_controller::Cpu1Controller, mtimer::MTimerPeripheral};
+use crate::{cart_loader::{CartLoader, CartLoaderCpuBarrier}, cpu1_controller::Cpu1Controller, mtimer::MTimerPeripheral, gpu::GpuResetHandle};
 
 use rv_vsys::{Cpu, CpuWakeupHandle};
 use crate::fm_mio::FmMemoryIO;
@@ -19,10 +19,10 @@ pub struct ApplicationCore {
 }
 
 impl ApplicationCore {
-	pub fn new(mio: FmMemoryIO, interrupt_bus: FmInterruptBus, cpu0_wakeup_handle: CpuWakeupHandle, cpu1_wakeup_handle: CpuWakeupHandle) -> Self {
+	pub fn new(mio: FmMemoryIO, interrupt_bus: FmInterruptBus, cpu0_wakeup_handle: CpuWakeupHandle, cpu1_wakeup_handle: CpuWakeupHandle, gpu_reset_handle: GpuResetHandle) -> Self {
 		let cpu0 = Cpu::new(mio.clone(), interrupt_bus.clone(), cpu0_wakeup_handle, 0);
 		let cpu1 = Cpu::new(mio.clone(), interrupt_bus, cpu1_wakeup_handle, 1);
-		let cart_loader_barrier = CartLoader::start(mio, &cpu0, &cpu1);
+		let cart_loader_barrier = CartLoader::start(mio, &cpu0, &cpu1, gpu_reset_handle);
 		ApplicationCore {
 			cpu0,
 			cpu1,

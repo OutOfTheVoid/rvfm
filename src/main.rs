@@ -18,5 +18,5 @@ mod input;
 use application_gui::ApplicationGUI;
 
 fn main() {
-	ApplicationGUI::run();
+	ApplicationGUI::run(6);
 }

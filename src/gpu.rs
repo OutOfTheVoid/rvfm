@@ -1,7 +1,6 @@
 use std::{borrow::BorrowMut, sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering}, mpsc}};
 use std::thread;
-
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use wgpu::{self};
 use winit::window::Window;
 
@@ -27,6 +26,7 @@ pub enum Mode {
 }
 
 pub enum Command {
+	Reset{condition: Arc<Condvar>, flag: Arc<Mutex<bool>>},
 	SetMode(Mode),
 	PresentMMFB,
 	SetMMFBBase(u32)
@@ -35,7 +35,6 @@ pub enum Command {
 pub const GPU_OUTPUT_W: u32 = 256;
 pub const GPU_OUTPUT_H: u32 = 192;
 pub const GPU_OUTPUT_FB_SIZE: u32 = GPU_OUTPUT_W * GPU_OUTPUT_H * 4;
-pub const GPU_SCREENWIN_SCALE: u32 = 4;
 
 pub struct GpuWindowEventSink {
 	last_present_tex: Option<wgpu::Texture>,
@@ -184,8 +183,9 @@ impl GpuPresentChain {
 }
 
 impl Gpu {
-	pub async fn new(window: &Window, mio: &mut FmMemoryIO, int_bus: &mut FmInterruptBus, cpu_wakeup: CpuWakeupHandle) -> (Self, GpuWindowEventSink) {
+	pub async fn new(window: &Window, mio: &mut FmMemoryIO, int_bus: &mut FmInterruptBus, cpu_wakeup: CpuWakeupHandle, screen_scale: u32) -> (Self, GpuWindowEventSink, GpuResetHandle) {
 		let (cmd_queue_tx, cmd_queue_rx) = mpsc::channel();
+		let reset_queue_tx = cmd_queue_tx.clone();
 		let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
 		let surface = unsafe {
 			instance.create_surface(window)
@@ -209,8 +209,8 @@ impl Gpu {
 		let swap_desc = wgpu::SwapChainDescriptor {
 			usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            width: GPU_OUTPUT_W * GPU_SCREENWIN_SCALE,
-            height: GPU_OUTPUT_H * GPU_SCREENWIN_SCALE,
+            width: GPU_OUTPUT_W * screen_scale,
+            height: GPU_OUTPUT_H * screen_scale,
             present_mode: wgpu::PresentMode::Fifo,
 		};
 		let swap_chain = device.create_swap_chain(&surface, &swap_desc);
@@ -246,7 +246,11 @@ impl Gpu {
 			cpu_wakeup: cpu_wakeup,
 			sync_interrupt_enable: sync_interrupt_enable,
 			sync_interrupt_state: sync_interrupt_state
-		})
+		},
+		GpuResetHandle {
+			cmd_tx: reset_queue_tx,
+		}
+	)
 	}
 	
 	pub fn run(mut self) {
@@ -268,7 +272,20 @@ impl Gpu {
 				},
 				Command::SetMMFBBase(base_address) => {
 					self.raw_fb_base_addr.store(base_address, Ordering::SeqCst);
-				}
+				},
+				Command::Reset{condition, flag} => {
+					self.set_mode(Mode::Disabled);
+					loop {
+						match self.cmd_queue.try_recv() {
+							Ok(_) => {},
+							Err(mpsc::TryRecvError::Empty) => break,
+							_ => panic!("receive queue disconnected!")
+						}
+					}
+					let mut flag = flag.lock();
+					*flag = true;
+					condition.notify_all();
+				},
 			}
 		}
 	}
@@ -291,10 +308,11 @@ impl Gpu {
 			self.mode = mode;
 			match mode {
 				Mode::Disabled => {
+					println!("Gpu set to mode: Disabled");
 					self.clear_display();
-					self.swap_fb();
 				}
 				Mode::RawFBDisplay => {
+					println!("Gpu set to mode: RawFBDisplay");
 					self.raw_fb_renderer = Some(RawFBRenderer::new(&self.device, self.raw_fb_base_addr.clone()).unwrap());
 				}
 			}
@@ -442,5 +460,40 @@ impl GpuInterruptOutput {
 	
 	pub fn get_sync_interrupt_state(&mut self) -> bool {
 		self.sync_interrupt_state.load(Ordering::SeqCst)
+	}
+}
+
+#[derive(Clone)]
+pub struct GpuResetHandle {
+	cmd_tx: mpsc::Sender<Command>
+}
+
+pub struct GpuResetCompletion {
+	complete_flag: Arc<Mutex<bool>>,
+	complete_cond: Arc<Condvar>
+}
+
+impl GpuResetCompletion {
+	pub fn wait(&self) {
+		let mut flag = self.complete_flag.lock();
+		while ! *flag {
+			self.complete_cond.wait(&mut flag);
+		}
+	}
+}
+
+impl GpuResetHandle {
+	pub fn reset_gpu(&self) -> GpuResetCompletion {
+		let complete_flag = Arc::new(Mutex::new(false));
+		let complete_cond = Arc::new(Condvar::new());
+		let command = Command::Reset {
+			condition: complete_cond.clone(),
+			flag: complete_flag.clone()
+		};
+		self.cmd_tx.send(command).unwrap();
+		GpuResetCompletion {
+			complete_flag,
+			complete_cond
+		}
 	}
 }

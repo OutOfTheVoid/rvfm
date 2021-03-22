@@ -1,13 +1,11 @@
-use std::{io, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}}};
-use bytemuck::offset_of;
-use image::ImageResult;
-use json::JsonValue;
+use std::{path::{PathBuf}, sync::{Arc, atomic::{AtomicU32, Ordering}}};
+use image::EncodableLayout;
 use parking_lot::{Condvar, Mutex};
 use regex::Regex;
 use rv_vsys::{Cpu, CpuKillHandle, MemIO, MemReadResult, MemWriteResult};
 use std::sync::mpsc;
 
-use crate::{fm_mio::FmMemoryIO, fm_interrupt_bus::FmInterruptBus, mtimer::MTimerPeripheral};
+use crate::{elf_loader, fm_interrupt_bus::FmInterruptBus, fm_mio::FmMemoryIO, gpu::GpuResetHandle, mtimer::MTimerPeripheral};
 
 #[derive(Debug, Clone)]
 enum CartData {
@@ -70,12 +68,14 @@ pub struct CartLoader {
 	command_channel: mpsc::Receiver<CartLoaderCmd>,
 	carts: Vec<Cart>,
 	cart_count: Arc<AtomicU32>,
+	gpu_reset_handle: GpuResetHandle,
 }
 
 const COMPLETION_RESULT_NONE: u32 = 0;
 const COMPLETION_RESULT_OK: u32 = 1;
 const COMPLETION_RESULT_ERROR_READING_DIR: u32 = 2;
 const COMPLETION_RESULT_CART_OUT_OF_INDEX: u32 = 3;
+const COMPLETION_RESULT_FAILED_READING_BINARY: u32 = 4;
 
 fn get_json_string(value: Option<&json::JsonValue>) -> Option<String> {
 	match value {
@@ -86,7 +86,7 @@ fn get_json_string(value: Option<&json::JsonValue>) -> Option<String> {
 }
 
 impl CartLoader {
-	pub fn start(mut mio: FmMemoryIO, cpu0: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>, cpu1: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>) -> CartLoaderCpuBarrier {
+	pub fn start(mut mio: FmMemoryIO, cpu0: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>, cpu1: &Cpu<MTimerPeripheral, FmMemoryIO, FmInterruptBus>, gpu_reset_handle: GpuResetHandle) -> CartLoaderCpuBarrier {
 		let (cmd_tx, cmd_rx) = mpsc::channel();
 		let cart_count = Arc::new(AtomicU32::new(0));
 		let peripheral = CartLoaderPeripheral {
@@ -113,7 +113,8 @@ impl CartLoader {
 			cpu1_kill: cpu1.get_kill_handle(),
 			command_channel: cmd_rx,
 			carts: Vec::new(),
-			cart_count
+			cart_count,
+			gpu_reset_handle,
 		};
 		let barrier = loader.make_cpu_barrier();
 		std::thread::spawn(move || {
@@ -131,19 +132,29 @@ impl CartLoader {
 	
 	fn load_cart(&mut self, cart_index: u32, error_write_addr: u32) {
 		if cart_index >= self.carts.len() as u32 {
-			self.mio.write_32(error_write_addr, 1); // ignore memory failure. this is how we signal an error
+			self.mio.write_32(error_write_addr, COMPLETION_RESULT_CART_OUT_OF_INDEX);
 			self.mio.access_break();
 		} else {
 			let cart = &self.carts[cart_index as usize];
+			let mut binary_path = cart.path.clone();
+			binary_path.push(&cart.binary);
+			println!("Loading cart binary: {}", binary_path.to_str().unwrap());
+			let elf_bytes = match std::fs::read(&binary_path) {
+				Ok(elf_bytes) => elf_bytes,
+				Err(..) => {
+					self.mio.write_32(error_write_addr, COMPLETION_RESULT_FAILED_READING_BINARY);
+					self.mio.access_break();
+					return;
+				}
+			};
 			{
 				let mut wait_gaurd = self.wait_lock.lock();
 				wait_gaurd.wait = true;
 				self.cpu1_kill.kill();
 				self.cpu0_kill.kill();
 			}
-			// actually load cart
-			// todo...
-			let start_pc = 0;
+			self.gpu_reset_handle.reset_gpu().wait();
+			let start_pc = elf_loader::load_elf(elf_bytes.as_bytes(), &mut self.mio, 0x0000_0000).unwrap();
 			{
 				let mut wait_gaurd = self.wait_lock.lock();
 				wait_gaurd.start_pc = start_pc;

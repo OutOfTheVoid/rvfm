@@ -56,19 +56,7 @@ int y = 0;
 void draw() {
 	gpu_mmfb_clear(mmfb, CLEAR_COLOR);
 	if (cart_metadata_loaded) {
-		if (input_key_down(InputKey_Up)) {
-			y --;
-		}
-		if (input_key_down(InputKey_Down)) {
-			y ++;
-		}
-		if (input_key_down(InputKey_Left)) {
-			x --;
-		}
-		if (input_key_down(InputKey_Right)) {
-			x ++;
-		}
-		draw_cart_icon(&cart_metadata, x, y);
+		draw_cart_icon(&cart_metadata, INPUT_MOUSE_X, INPUT_MOUSE_Y);
 	}
 }
 
@@ -77,6 +65,15 @@ void halt() {
 		disable_interrupts();
 		wfi();
 	}
+}
+
+uint32_t load_cart(uint32_t index) {
+	volatile uint32_t load_error;
+	cart_loader_load_cart(index, &load_error);
+	while (! cart_loader_poll_completion(& load_error)) {
+		mtimer_delay(&delay_context, 10);
+	}
+	return load_error;
 }
 
 void main() {
@@ -119,7 +116,13 @@ void main() {
 	debug_print_string("Cart 0 name: ");
 	debug_print_string((const char *) cart_metadata.name);
 	
+	bool requested_load = false;
+	volatile uint32_t load_error_completion = CART_LOADER_COMPLETION_RESULT_NONE;
+	
 	while(true) {
+		if (input_key_down(InputKey_Space)) {
+			load_cart(0);
+		}
 		draw();
 		gpu_mmfb_present();
 		gpu_vsync_wait();

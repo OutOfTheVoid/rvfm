@@ -52,6 +52,13 @@ static inline void cart_loader_read_cart_metadata(uint32_t index, volatile cart_
 	CART_LOADER_COMMAND = CART_LOADER_CMD_READ_CART_METADATA;
 }
 
+static inline void cart_loader_load_cart(uint32_t index, volatile uint32_t * error_completion) {
+	*error_completion = CART_LOADER_COMPLETION_RESULT_NONE;
+	CART_LOADER_PARAM0 = index;
+	CART_LOADER_PARAM1 = (uint32_t) error_completion;
+	CART_LOADER_COMMAND = CART_LOADER_CMD_LOAD_CART;
+}
+
 static inline bool cart_loader_completion_is_error(volatile uint32_t completion) {
 	return completion != CART_LOADER_COMPLETION_RESULT_OK && completion != CART_LOADER_COMPLETION_RESULT_NONE;
 }

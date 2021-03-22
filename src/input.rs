@@ -2,7 +2,7 @@ use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 
 use crate::fm_mio::FmMemoryIO;
 use rv_vsys::{MemReadResult, MemWriteResult};
-use winit::event::VirtualKeyCode;
+use winit::event::{MouseButton, VirtualKeyCode};
 
 #[derive(Debug)]
 pub struct InputPeripheral {
@@ -12,6 +12,9 @@ pub struct InputPeripheral {
 	key_states_0_31: Arc<AtomicU32>,
 	key_states_32_63: Arc<AtomicU32>,
 	key_states_64_95: Arc<AtomicU32>,
+	mouse_events: Arc<AtomicU32>,
+	mouse_x: Arc<AtomicU32>,
+	mouse_y: Arc<AtomicU32>,
 }
 
 pub struct InputEventSink {
@@ -21,6 +24,9 @@ pub struct InputEventSink {
 	key_states_0_31: Arc<AtomicU32>,
 	key_states_32_63: Arc<AtomicU32>,
 	key_states_64_95: Arc<AtomicU32>,
+	mouse_events: Arc<AtomicU32>,
+	mouse_x: Arc<AtomicU32>,
+	mouse_y: Arc<AtomicU32>,
 }
 
 fn map_vkey(vkey: VirtualKeyCode) -> Option<u32> {
@@ -99,7 +105,43 @@ fn map_vkey(vkey: VirtualKeyCode) -> Option<u32> {
 	}
 }
 
+const MOUSE_EVENT_FLAG_MOVE: u32 = 1 << 0;
+const MOUSE_EVENT_FLAG_BUTTON_0_DOWN: u32 = 1 << 1;
+const MOUSE_EVENT_FLAG_BUTTON_0_UP: u32 = 1 << 2;
+const MOUSE_EVENT_FLAG_BUTTON_1_DOWN: u32 = 1 << 3;
+const MOUSE_EVENT_FLAG_BUTTON_1_UP: u32 = 1 << 4;
+
 impl InputEventSink {
+	pub fn mouse_move_event(&mut self, x: u32, y: u32) {
+		self.mouse_x.store(x, Ordering::SeqCst);
+		self.mouse_y.store(y, Ordering::SeqCst);
+		self.mouse_events.fetch_or(MOUSE_EVENT_FLAG_MOVE, Ordering::SeqCst);
+	}
+	
+	pub fn mouse_button_event(&mut self, button: MouseButton, down: bool) {
+		match button {
+			MouseButton::Left => {
+				if down {
+					self.mouse_events.fetch_and(!MOUSE_EVENT_FLAG_BUTTON_0_UP, Ordering::SeqCst);
+					self.mouse_events.fetch_or(MOUSE_EVENT_FLAG_BUTTON_0_DOWN, Ordering::SeqCst);
+				} else {
+					self.mouse_events.fetch_and(!MOUSE_EVENT_FLAG_BUTTON_0_DOWN, Ordering::SeqCst);
+					self.mouse_events.fetch_or(MOUSE_EVENT_FLAG_BUTTON_0_UP, Ordering::SeqCst);
+				}
+			},
+			MouseButton::Right => {
+				if down {
+					self.mouse_events.fetch_and(!MOUSE_EVENT_FLAG_BUTTON_1_UP, Ordering::SeqCst);
+					self.mouse_events.fetch_or(MOUSE_EVENT_FLAG_BUTTON_1_DOWN, Ordering::SeqCst);
+				} else {
+					self.mouse_events.fetch_and(!MOUSE_EVENT_FLAG_BUTTON_1_DOWN, Ordering::SeqCst);
+					self.mouse_events.fetch_or(MOUSE_EVENT_FLAG_BUTTON_1_UP, Ordering::SeqCst);
+				}
+			},
+			_ => {}
+		}
+	}
+	
 	pub fn vkey_event(&mut self, vkey: VirtualKeyCode, down: bool) {
 		let key_index = map_vkey(vkey);
 		if let Some(key_index) = key_index {
@@ -148,6 +190,10 @@ const REG_KEY_STATES_32_63: u32 = 16;
 const REG_KEY_STATES_64_95: u32 = 20;
 const REG_CLEAR_KEY_EVENTS: u32 = 24;
 
+const REG_MOUSE_EVENTS: u32 = 32;
+const REG_MOUSE_X: u32 = 36;
+const REG_MOUSE_Y: u32 = 40;
+
 impl InputPeripheral {
 	pub fn new(mio: &mut FmMemoryIO) -> InputEventSink {
 		let key_change_events_0_31 = Arc::new(AtomicU32::new(0));
@@ -156,6 +202,9 @@ impl InputPeripheral {
 		let key_states_0_31 = Arc::new(AtomicU32::new(0));
 		let key_states_32_63 = Arc::new(AtomicU32::new(0));
 		let key_states_64_95 = Arc::new(AtomicU32::new(0));
+		let mouse_events = Arc::new(AtomicU32::new(0));
+		let mouse_x = Arc::new(AtomicU32::new(0));
+		let mouse_y = Arc::new(AtomicU32::new(0));
 		let peripheral = InputPeripheral {
 			key_change_events_0_31: key_change_events_0_31.clone(),
 			key_change_events_32_63: key_change_events_32_63.clone(),
@@ -163,6 +212,9 @@ impl InputPeripheral {
 			key_states_0_31: key_states_0_31.clone(),
 			key_states_32_63: key_states_32_63.clone(),
 			key_states_64_95: key_states_64_95.clone(),
+			mouse_events: mouse_events.clone(),
+			mouse_x: mouse_x.clone(),
+			mouse_y: mouse_y.clone(),
 		};
 		mio.set_input(peripheral);
 		InputEventSink {
@@ -172,6 +224,9 @@ impl InputPeripheral {
 			key_states_0_31,
 			key_states_32_63,
 			key_states_64_95,
+			mouse_events,
+			mouse_x,
+			mouse_y
 		}
 	}
 	
@@ -183,6 +238,9 @@ impl InputPeripheral {
 			REG_KEY_STATES_0_31 => MemReadResult::Ok(self.key_states_0_31.load(Ordering::SeqCst)),
 			REG_KEY_STATES_32_63 => MemReadResult::Ok(self.key_states_32_63.load(Ordering::SeqCst)),
 			REG_KEY_STATES_64_95 => MemReadResult::Ok(self.key_states_64_95.load(Ordering::SeqCst)),
+			REG_MOUSE_EVENTS => MemReadResult::Ok(self.mouse_events.load(Ordering::SeqCst)),
+			REG_MOUSE_X => MemReadResult::Ok(self.mouse_x.load(Ordering::SeqCst)),
+			REG_MOUSE_Y => MemReadResult::Ok(self.mouse_y.load(Ordering::SeqCst)),
 			_ => MemReadResult::Ok(0),
 		}
 	}
@@ -202,11 +260,17 @@ impl InputPeripheral {
 				MemWriteResult::Ok
 			},
 			REG_CLEAR_KEY_EVENTS => {
-				self.key_change_events_0_31.store(0, Ordering::SeqCst);
-				self.key_change_events_32_63.store(0, Ordering::SeqCst);
-				self.key_change_events_64_95.store(0, Ordering::SeqCst);
+				if value == 0 {
+					self.key_change_events_0_31.store(0, Ordering::SeqCst);
+					self.key_change_events_32_63.store(0, Ordering::SeqCst);
+					self.key_change_events_64_95.store(0, Ordering::SeqCst);
+				}
 				MemWriteResult::Ok
 			},
+			REG_MOUSE_EVENTS => {
+				self.mouse_events.fetch_and(! value, Ordering::SeqCst);
+				MemWriteResult::Ok
+			}
 			_ => MemWriteResult::ErrReadOnly
 		}
 	}
