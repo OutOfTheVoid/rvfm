@@ -1,4 +1,4 @@
-use std::{path::{PathBuf}, sync::{Arc, atomic::{AtomicU32, Ordering}}};
+use std::{fs::File, os::unix::prelude::FileExt, path::{PathBuf}, sync::{Arc, atomic::{AtomicU32, Ordering}}};
 use image::EncodableLayout;
 use parking_lot::{Condvar, Mutex};
 use regex::Regex;
@@ -18,15 +18,15 @@ enum CartData {
 
 #[derive(Debug, Clone)]
 struct Cart {
-	path: PathBuf,
-	name: String,
-	version: (u32, u32, u32),
-	binary: PathBuf,
-	data: CartData,
-	developer: String,
-	developer_url: String,
-	source: String,
-	icon: Option<PathBuf>,
+	pub path: PathBuf,
+	pub name: String,
+	pub version: (u32, u32, u32),
+	pub binary: PathBuf,
+	pub data: CartData,
+	pub developer: String,
+	pub developer_url: String,
+	pub source: String,
+	pub icon: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,7 +56,30 @@ enum CartLoaderCmd {
 	EnumerateCarts(u32),
 	ReadCartMetadata{index: u32, metadata_struct_addr: u32, completion_addr: u32},
 	LoadCart{index: u32, error_write_addr: u32},
+	SetupDataAccessFs{slot: u32, file_name: PathBuf, completion_addr: u32, flags: u32},
+	SetupDataAccessBinary{slot: u32, completion_addr: u32, offset: u32, length: u32},
+	CloseDataAccess{slot: u32, completion_addr: u32},
+	ReadData{slot: u32, offset: u32, length: u32, buffer_addr: u32, read_size_addr: u32, completion_addr: u32},
+	GetDataExtents{slot: u32, extents_addr: u32, completion_addr: u32},
 }
+
+enum DataAccessSlot {
+	FileAccess {
+		file_name: std::path::PathBuf,
+		file: std::fs::File,
+		write: bool,
+	},
+	BinaryAccess {
+		binary_file_name: Arc<std::path::PathBuf>,
+		binary_file: Arc<std::fs::File>,
+		write: bool,
+		offset: u32,
+		length: Option<u32>
+	},
+	None
+}
+
+const DATA_SLOT_COUNT: u32 = 8;
 
 pub struct CartLoader {
 	library_dir: PathBuf,
@@ -69,13 +92,25 @@ pub struct CartLoader {
 	carts: Vec<Cart>,
 	cart_count: Arc<AtomicU32>,
 	gpu_reset_handle: GpuResetHandle,
+	
+	current_cart: Option<Cart>,
+	data_access_slots: Box<[DataAccessSlot]>,
+	binary_file_name: Option<Arc<std::path::PathBuf>>,
+	binary_file: Option<Arc<std::fs::File>>,
 }
 
 const COMPLETION_RESULT_NONE: u32 = 0;
 const COMPLETION_RESULT_OK: u32 = 1;
 const COMPLETION_RESULT_ERROR_READING_DIR: u32 = 2;
-const COMPLETION_RESULT_CART_OUT_OF_INDEX: u32 = 3;
+const COMPLETION_RESULT_CART_INDEX_OUT_OF_BOUNDS: u32 = 3;
 const COMPLETION_RESULT_FAILED_READING_BINARY: u32 = 4;
+const COMPLETION_RESULT_DATA_SLOT_INDEX_OUT_OF_BOUNDS: u32 = 5;
+const COMPLETION_RESULT_NO_CART_LOADED: u32 = 6;
+const COMPLETION_RESULT_FAILED_OPENING_FILE: u32 = 7;
+const COMPLETION_RESULT_BAD_OPERATION_FOR_DATA_FORMAT: u32 = 8;
+const COMPLETION_RESULT_FILENAME_READ_ERROR: u32 = 9;
+const COMPLETION_RESULT_DATA_SLOT_NOT_OPEN: u32 = 10;
+const COMPLETION_RESULT_FAILED_READING_FILE: u32 = 11;
 
 fn get_json_string(value: Option<&json::JsonValue>) -> Option<String> {
 	match value {
@@ -96,11 +131,17 @@ impl CartLoader {
 			param1: Arc::new(AtomicU32::new(0)),
 			param2: Arc::new(AtomicU32::new(0)),
 			param3: Arc::new(AtomicU32::new(0)),
+			param4: Arc::new(AtomicU32::new(0)),
+			param5: Arc::new(AtomicU32::new(0)),
 		};
 		mio.set_cart_loader(peripheral);
 		let mut cart_dir = std::env::current_dir().unwrap();
 		cart_dir.push("test");
 		cart_dir.push("cart_test");
+		let mut data_access_slots = Vec::new();
+		for _ in 0 .. DATA_SLOT_COUNT {
+			data_access_slots.push(DataAccessSlot::None);
+		}
 		let loader = Self {
 			library_dir: cart_dir,
 			mio,
@@ -115,6 +156,11 @@ impl CartLoader {
 			carts: Vec::new(),
 			cart_count,
 			gpu_reset_handle,
+			
+			current_cart: None,
+			data_access_slots: data_access_slots.into_boxed_slice(),
+			binary_file_name: None,
+			binary_file: None,
 		};
 		let barrier = loader.make_cpu_barrier();
 		std::thread::spawn(move || {
@@ -132,7 +178,7 @@ impl CartLoader {
 	
 	fn load_cart(&mut self, cart_index: u32, error_write_addr: u32) {
 		if cart_index >= self.carts.len() as u32 {
-			self.mio.write_32(error_write_addr, COMPLETION_RESULT_CART_OUT_OF_INDEX);
+			self.mio.write_32(error_write_addr, COMPLETION_RESULT_CART_INDEX_OUT_OF_BOUNDS);
 			self.mio.access_break();
 		} else {
 			let cart = &self.carts[cart_index as usize];
@@ -160,13 +206,15 @@ impl CartLoader {
 				wait_gaurd.start_pc = start_pc;
 				wait_gaurd.wait = false;
 			}
+			self.binary_file = None;
+			self.binary_file_name = None;
+			self.current_cart = Some(cart.clone());
 			self.wait_cond.notify_all();
 		}
 	}
 	
 	fn enumerate_carts(&mut self, completion_signal_addr: u32) {
 		self.mio.write_32(completion_signal_addr, COMPLETION_RESULT_NONE);
-		self.mio.access_break();
 		let cart_paths = match std::fs::read_dir(self.library_dir.as_path()) {
 			Ok(x) => {
 				x.filter_map(|entry| {
@@ -180,7 +228,6 @@ impl CartLoader {
 			},
 			Err(..) => {
 				self.mio.write_32(completion_signal_addr, COMPLETION_RESULT_ERROR_READING_DIR);
-				self.mio.access_break();
 				return;
 			}
 		};
@@ -357,7 +404,6 @@ impl CartLoader {
 		self.carts = carts;
 		self.cart_count.store(self.carts.len() as u32, Ordering::SeqCst);
 		self.mio.write_32(completion_signal_addr, COMPLETION_RESULT_OK);
-		self.mio.access_break();
 	}
 	
 	fn write_cart_metadata_string(&mut self, string: &String, string_addr: u32) {
@@ -370,7 +416,7 @@ impl CartLoader {
 	
 	fn read_cart_metadata(&mut self, index: u32, metadata_struct_addr: u32, completion_addr: u32) {
 		if index >= self.carts.len() as u32 {
-			self.mio.write_32(completion_addr, COMPLETION_RESULT_CART_OUT_OF_INDEX);
+			self.mio.write_32(completion_addr, COMPLETION_RESULT_CART_INDEX_OUT_OF_BOUNDS);
 			self.mio.access_break();
 			return;
 		}
@@ -426,7 +472,185 @@ impl CartLoader {
 		self.mio.write_32(metadata_struct_addr + 0x40404, minor);
 		self.mio.write_32(metadata_struct_addr + 0x40408, major);
 		self.mio.write_32(completion_addr, COMPLETION_RESULT_OK);
-		self.mio.access_break();
+	}
+	
+	pub fn setup_data_access_fs(&mut self, completion_addr: u32, index: u32, file_name: PathBuf, flags: u32) {
+		if index >= DATA_SLOT_COUNT {
+			self.mio.write_32(completion_addr, COMPLETION_RESULT_DATA_SLOT_INDEX_OUT_OF_BOUNDS);
+			return;
+		}
+		if let Some(current_cart) = &self.current_cart {
+			match &current_cart.data {
+				CartData::FsR(root_path) => {
+					if flags & SETUP_DATA_ACCESS_FS_FLAG_WRITE != 0 {
+						self.mio.write_32(completion_addr, COMPLETION_RESULT_BAD_OPERATION_FOR_DATA_FORMAT);
+						return;
+					}
+					let mut file_path = root_path.clone();
+					file_path.push(file_name);
+					let file = match std::fs::File::open(&file_path) {
+						Ok(file) => file,
+						Err(..) => {
+							self.mio.write_32(completion_addr, COMPLETION_RESULT_FAILED_OPENING_FILE);
+							return;
+						}
+					};
+					self.data_access_slots[index as usize] = DataAccessSlot::FileAccess {
+						file_name: file_path,
+						file,
+						write: false
+					};
+					self.mio.write_32(completion_addr, COMPLETION_RESULT_OK);
+				},
+				CartData::FsRW(root_path) => {
+					let mut file_path = root_path.clone();
+					file_path.push(file_name);
+					let file = match std::fs::File::open(&file_path) {
+						Ok(file) => file,
+						Err(..) => {
+							self.mio.write_32(completion_addr, COMPLETION_RESULT_FAILED_OPENING_FILE);
+							return;
+						}
+					};
+					self.data_access_slots[index as usize] = DataAccessSlot::FileAccess {
+						file_name: file_path,
+						file,
+						write: flags & SETUP_DATA_ACCESS_FS_FLAG_WRITE != 0
+					};
+					self.mio.write_32(completion_addr, COMPLETION_RESULT_OK);
+				},
+				_ => {
+					self.mio.write_32(completion_addr, COMPLETION_RESULT_BAD_OPERATION_FOR_DATA_FORMAT);
+					return;
+				}
+			}
+		} else {
+			self.mio.write_32(completion_addr, COMPLETION_RESULT_NO_CART_LOADED);
+		}
+	}
+	
+	fn close_data_access(&mut self, slot: u32, completion_addr: u32) {
+		if slot >= DATA_SLOT_COUNT {
+			self.mio.write_32(completion_addr, COMPLETION_RESULT_DATA_SLOT_INDEX_OUT_OF_BOUNDS);
+			return;
+		}
+		self.data_access_slots[slot as usize] = DataAccessSlot::None;
+		self.mio.write_32(completion_addr, COMPLETION_RESULT_OK);
+	}
+	
+	fn read_file_at_up_to(file: &File, mut buf: &mut [u8], offset: u64) -> Result<usize, std::io::Error> {
+		let buf_len = buf.len();
+		let mut offset = offset;
+	
+		while !buf.is_empty() {
+			match file.read_at(buf, offset) {
+				Ok(0) => break,
+				Ok(n) => {
+					let tmp = buf;
+					buf = &mut tmp[n..];
+					offset = offset + n as u64;
+				}
+				Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+				Err(e) => return Err(e),
+			}
+		}
+		Ok(buf_len - buf.len())
+	}
+	
+	fn read_data(&mut self, slot: u32, offset: u32, length: u32, buffer_addr: u32, read_size_addr: u32, completion_addr: u32) {
+		if slot >= DATA_SLOT_COUNT {
+			self.mio.write_32(completion_addr, COMPLETION_RESULT_DATA_SLOT_INDEX_OUT_OF_BOUNDS);
+			return;
+		}
+		match &self.data_access_slots[slot as usize] {
+			DataAccessSlot::FileAccess {
+				file,
+				..
+			} => {
+				let mut total_read = 0;
+				let mut eof = false;
+				while !eof && total_read < length {
+					let left_to_read = length - total_read;
+					let mut read_size = left_to_read.min(0x1000);
+					let mut read_vec = vec![0u8; left_to_read as usize].into_boxed_slice();
+					match Self::read_file_at_up_to(file, &mut read_vec, (offset + total_read) as u64) {
+						Ok(actually_read_size) => {
+							if read_size as usize != actually_read_size {
+								read_size = actually_read_size as u32;
+								eof = true;
+							}
+						},
+						_ => {
+							self.mio.write_32(completion_addr, COMPLETION_RESULT_FAILED_READING_FILE);
+							return;
+						}
+					}
+					for i in 0 .. read_size {
+						self.mio.write_8(buffer_addr + total_read + i, read_vec[i as usize]);
+					}
+					total_read += read_size;
+				}
+				self.mio.write_32(read_size_addr, total_read);
+				self.mio.write_32(completion_addr, COMPLETION_RESULT_OK);
+			},
+			DataAccessSlot::BinaryAccess {
+				/*binary_file_name,
+				binary_file,
+				offset,
+				length,*/
+				..
+			} => {
+				// todo
+				self.mio.write_32(completion_addr, COMPLETION_RESULT_FAILED_READING_BINARY);
+			},
+			_ => {
+				self.mio.write_32(completion_addr, COMPLETION_RESULT_DATA_SLOT_NOT_OPEN);
+			}
+		}
+	}
+	
+	fn get_data_extents(&mut self, slot: u32, extents_addr: u32, completion_addr: u32) {
+		if slot >= DATA_SLOT_COUNT {
+			self.mio.write_32(completion_addr, COMPLETION_RESULT_DATA_SLOT_INDEX_OUT_OF_BOUNDS);
+			return;
+		}
+		match &self.data_access_slots[slot as usize] {
+			DataAccessSlot::FileAccess {
+				file,
+				..
+			} => {
+				match file.sync_all() {
+					Ok(..) => {},
+					Err(..) => {
+						self.mio.write_32(completion_addr, COMPLETION_RESULT_FAILED_READING_FILE);
+						return;
+					}
+				};
+				match file.metadata() {
+					Ok(metadata) => {
+						let length = metadata.len();
+						self.mio.write_32(extents_addr, length as u32);
+						self.mio.write_32(completion_addr, COMPLETION_RESULT_OK);
+					},
+					_ => {
+						self.mio.write_32(completion_addr, COMPLETION_RESULT_FAILED_READING_FILE);
+					}
+				}
+			},
+			DataAccessSlot::BinaryAccess {
+				/*binary_file_name,
+				binary_file,
+				offset,
+				length,*/
+				..
+			} => {
+				// todo
+				self.mio.write_32(completion_addr, COMPLETION_RESULT_FAILED_READING_BINARY);
+			},
+			_ => {
+				self.mio.write_32(completion_addr, COMPLETION_RESULT_DATA_SLOT_NOT_OPEN);
+			}
+		}
 	}
 	
 	pub fn run(mut self) {
@@ -449,6 +673,43 @@ impl CartLoader {
 							error_write_addr
 						} => {
 							self.load_cart(index, error_write_addr);
+						},
+						CartLoaderCmd::SetupDataAccessFs {
+							slot,
+							file_name,
+							completion_addr,
+							flags
+						} => {
+							self.setup_data_access_fs(completion_addr, slot, file_name, flags);
+						},
+						CartLoaderCmd::SetupDataAccessBinary {
+							/*slot,
+							completion_addr,
+							offset,
+							length*/
+							..
+						} => {
+							
+						},
+						CartLoaderCmd::CloseDataAccess{slot, completion_addr} => {
+							self.close_data_access(slot, completion_addr);
+						},
+						CartLoaderCmd::ReadData{
+							slot,
+							offset,
+							length,
+							buffer_addr,
+							read_size_addr,
+							completion_addr
+						} => {
+							self.read_data(slot, offset, length, buffer_addr, read_size_addr, completion_addr);
+						},
+						CartLoaderCmd::GetDataExtents{
+							slot,
+							extents_addr,
+							completion_addr
+						} => {
+							self.get_data_extents(slot, extents_addr, completion_addr);
 						}
 					}
 				},
@@ -456,6 +717,7 @@ impl CartLoader {
 					panic!("Cart loader thread receive error");
 				}
 			}
+			self.mio.access_break();
 		}
 	}
 }
@@ -468,6 +730,8 @@ pub struct CartLoaderPeripheral {
 	param1: Arc<AtomicU32>,
 	param2: Arc<AtomicU32>,
 	param3: Arc<AtomicU32>,
+	param4: Arc<AtomicU32>,
+	param5: Arc<AtomicU32>
 }
 
 const REG_COMMAND: u32 = 0;
@@ -475,20 +739,71 @@ const REG_PARAM0: u32 = 4;
 const REG_PARAM1: u32 = 8;
 const REG_PARAM2: u32 = 12;
 const REG_PARAM3: u32 = 16;
-const REG_CART_COUNT: u32 = 20;
+const REG_PARAM4: u32 = 20;
+const REG_PARAM5: u32 = 24;
+const REG_CART_COUNT: u32 = 28;
 
 const COMMAND_ENUMERATE_CARTS: u32 = 0;
 const COMMAND_READ_CART_METADATA: u32 = 1;
 const COMMAND_LOAD_CART: u32 = 2;
+const COMMAND_SETUP_DATA_ACCESS_FS: u32 = 3;
+//const COMMAND_SETUP_DATA_ACCESS_BINARY: u32 = 4;
+const COMMAND_CLOSE_DATA_ACCESS: u32 = 5;
+const COMMAND_READ_DATA: u32 = 6;
+//const COMMAND_WRITE_DATA: u32 = 7;
+const COMMAND_GET_DATA_EXTENTS: u32 = 8;
+
+const SETUP_DATA_ACCESS_FS_FLAG_WRITE: u32 = 1 << 0;
 
 impl CartLoaderPeripheral {
-	pub fn write_32(&self, offset: u32, value: u32) -> MemWriteResult {
+	fn read_filename(mio: &FmMemoryIO, addr: u32) -> Option<PathBuf> {
+		let mut path_str = String::from("");
+		let mut path_buf: Option<PathBuf> = None;
+		let mut i = 0;
+		loop {
+			match mio.read_8(addr + i) {
+				MemReadResult::Ok(c) => {
+					if c == 0 {
+						match &mut path_buf {
+							Some(path_buf) => {
+								if (path_str.len() != 0) {
+									path_buf.push(path_str);
+								}
+								break;
+							},
+							None => {
+								path_buf = Some(PathBuf::from(path_str));
+								path_str = String::from("");
+							}
+						}
+					} else if c as char == '/' {
+						match &mut path_buf {
+							Some(path_buf) => {
+								path_buf.push(path_str);
+							},
+							None => {
+								path_buf = Some(PathBuf::from(path_str));
+							}
+						}
+						path_str = String::from("");
+					} else {
+						path_str += String::from(c as char).as_str();
+					}
+				},
+				_ => return None
+			}
+			i = i + 1;
+		}
+		path_buf
+	}
+	
+	pub fn write_32(&self, mio: &mut FmMemoryIO, offset: u32, value: u32) -> MemWriteResult {
 		if (offset & 0x03) != 0 {
 			return MemWriteResult::ErrAlignment;
 		}
 		match offset {
 			REG_COMMAND => {
-				if self.command(value) {
+				if self.command(mio, value) {
 					MemWriteResult::Ok
 				} else {
 					MemWriteResult::PeripheralError
@@ -510,13 +825,21 @@ impl CartLoaderPeripheral {
 				self.param3.store(value, Ordering::SeqCst);
 				MemWriteResult::Ok
 			},
+			REG_PARAM4 => {
+				self.param4.store(value, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
+			REG_PARAM5 => {
+				self.param5.store(value, Ordering::SeqCst);
+				MemWriteResult::Ok
+			},
 			_ => {
 				MemWriteResult::PeripheralError
 			}
 		}
 	}
 	
-	fn command(&self, command: u32) -> bool {
+	fn command(&self, mio: &mut FmMemoryIO, command: u32) -> bool {
 		match command {
 			COMMAND_ENUMERATE_CARTS => {
 				let completion_addr = self.param0.load(Ordering::SeqCst);
@@ -539,6 +862,63 @@ impl CartLoaderPeripheral {
 				self.cmd_tx.send(CartLoaderCmd::ReadCartMetadata {
 					index,
 					metadata_struct_addr,
+					completion_addr
+				}).unwrap();
+				true
+			},
+			COMMAND_SETUP_DATA_ACCESS_FS => {
+				let index = self.param0.load(Ordering::SeqCst);
+				let file_name_addr = self.param1.load(Ordering::SeqCst);
+				let completion_addr = self.param2.load(Ordering::SeqCst);
+				let flags = self.param3.load(Ordering::SeqCst);
+				let file_name = Self::read_filename(mio, file_name_addr);
+				if let Some(file_name) = file_name {
+					self.cmd_tx.send(CartLoaderCmd::SetupDataAccessFs {
+						slot: index,
+						file_name,
+						completion_addr,
+						flags
+					}).unwrap();
+					true
+				} else {
+					mio.write_32(completion_addr, COMPLETION_RESULT_FILENAME_READ_ERROR);
+					false
+				}
+			},
+			COMMAND_CLOSE_DATA_ACCESS => {
+				let index = self.param0.load(Ordering::SeqCst);
+				let completion_addr = self.param1.load(Ordering::SeqCst);
+				self.cmd_tx.send(CartLoaderCmd::CloseDataAccess {
+					slot: index,
+					completion_addr
+				}).unwrap();
+				true
+			},
+			// slot: u32, offset: u32, length: u32, buffer_addr: u32, completion_addr: u32
+			COMMAND_READ_DATA => {
+				let slot = self.param0.load(Ordering::SeqCst);
+				let offset = self.param1.load(Ordering::SeqCst);
+				let length = self.param2.load(Ordering::SeqCst);
+				let buffer_addr = self.param3.load(Ordering::SeqCst);
+				let read_size_addr = self.param4.load(Ordering::SeqCst);
+				let completion_addr = self.param5.load(Ordering::SeqCst);
+				self.cmd_tx.send(CartLoaderCmd::ReadData {
+					slot,
+					offset,
+					length,
+					buffer_addr,
+					read_size_addr,
+					completion_addr
+				}).unwrap();
+				true
+			},
+			COMMAND_GET_DATA_EXTENTS => {
+				let slot = self.param0.load(Ordering::SeqCst);
+				let extents_addr = self.param1.load(Ordering::SeqCst);
+				let completion_addr = self.param2.load(Ordering::SeqCst);
+				self.cmd_tx.send(CartLoaderCmd::GetDataExtents {
+					slot,
+					extents_addr,
 					completion_addr
 				}).unwrap();
 				true

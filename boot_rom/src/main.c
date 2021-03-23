@@ -11,8 +11,7 @@
 #include <gpu/vsync.h>
 #include <blit.h>
 #include <input.h>
-
-#include "cart_loader.h"
+#include <cart_loader.h>
 
 volatile mtimer_delay_context_t delay_context;
 

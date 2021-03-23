@@ -75,7 +75,7 @@ The `data` field of the cart json accepts a few different kinds of data stores, 
 - test/audio_synthesis
   - Shows how to use the sound output peripheral with basic fixed-point audio synthesis
 - test/cart_test
-  - Shows the basic structure of a "cart", along with a basic program
+  - Shows the basic structure of a "cart", along with a basic cart data-reading program
 - test/floating_point
   - Demos the F extension working
 - test/math_accel

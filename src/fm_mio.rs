@@ -650,7 +650,7 @@ impl MemIO<MTimerPeripheral> for FmMemoryIO {
 					},
 					8 => {
 						let device = self.cart_loader_device.clone();
-						device.get().unwrap().write_32(peripheral_offset, value)
+						device.get().unwrap().write_32(self, peripheral_offset, value)
 					},
 					9 => {
 						let device = self.input.clone();
