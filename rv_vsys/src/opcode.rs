@@ -254,35 +254,12 @@ impl OpFunct3Funct7 {
 
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
-pub enum LoadFpFunct3 {
-	Width32,
-	Unknown,
-}
-
-impl LoadFpFunct3 {
-	pub fn from_raw(raw: u32) -> Self {
-		match raw {
-			0b010 => Self::Width32,
-			_ => Self::Unknown,
-		}
-	}
-	
-	pub fn to_raw(&self) -> u32 {
-		match self {
-			Self::Width32 => 0b010,
-			Self::Unknown => 0b000,
-		}
-	}
-}
-
-#[derive(Debug, Clone, Copy)]
-#[allow(non_camel_case_types)]
-pub enum StoreFpFunct3 {
+pub enum FpFormatFunct3 {
 	Width32,
 	Unknown
 }
 
-impl StoreFpFunct3 {
+impl FpFormatFunct3 {
 	pub fn from_raw(raw: u32) -> Self {
 		match raw {
 			0b010 => Self::Width32,
@@ -794,8 +771,8 @@ impl Opcode {
 		LoadFpFunct3::from_raw(self.funct3())
 	}
 	
-	pub fn funct3_storefp(&self) -> StoreFpFunct3 {
-		StoreFpFunct3::from_raw(self.funct3())
+	pub fn funct3_fpformat(&self) -> FpFormatFunct3 {
+		FpFormatFunct3::from_raw(self.funct3())
 	}
 	
 	pub fn funct3funct7_op(&self) -> OpFunct3Funct7 {

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::{AtomicFunct7, AtomicSizeFunct3, BranchFunct3, FCvtType, FMvXWClassFunct3, FpCmpFunct3, FpFunct7, FpMinMaxFunct3, FpRm, FpSignFunct3, InterruptBus, LoadFpFunct3, LoadFunct3, MTimer, MemIO, MemReadResult, MemWriteResult, Op, OpFunct3Funct7, OpImmFunct3, Opcode, StoreFpFunct3, StoreFunct3, SystemFunct3, SystemIntFunct7};
+use crate::{AtomicFunct7, AtomicSizeFunct3, BranchFunct3, FCvtType, FMvXWClassFunct3, FpCmpFunct3, FpFunct7, FpMinMaxFunct3, FpRm, FpSignFunct3, InterruptBus, LoadFunct3, MTimer, MemIO, MemReadResult, MemWriteResult, Op, OpFunct3Funct7, OpImmFunct3, Opcode, FpFormatFunct3, StoreFunct3, SystemFunct3, SystemIntFunct7};
 use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 use num::Signed;
 use parking_lot::{Condvar, Mutex};
@@ -889,9 +889,9 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 				let rbase = opcode.rs1();
 				let offset = opcode.i_imm_signed();
 				let address = self.get_gpr(rbase).wrapping_add(offset as u32);
-				let width = opcode.funct3_loadfp();
+				let width = opcode.funct3_fpformat();
 				match width {
-					LoadFpFunct3::Width32 => {
+					FpFormatFunct3::Width32 => {
 						let value = match self.mio.read_32(address) {
 							MemReadResult::Ok(value) => {
 								f32::from_bits(value)
@@ -913,7 +913,7 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 						};
 						self.set_fpr(rd, value);
 					},
-					LoadFpFunct3::Unknown => {
+					FpFormatFunct3::Unknown => {
 						return self.illegal_instruction(opcode);
 					},
 				}
@@ -924,9 +924,9 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 				let rbase = opcode.rs1();
 				let offset = opcode.s_imm_signed();
 				let address = self.get_gpr(rbase).wrapping_add(offset as u32);
-				let width = opcode.funct3_storefp();
+				let width = opcode.funct3_fpformat();
 				match width {
-					StoreFpFunct3::Width32 => {
+					FpFormatFunct3::Width32 => {
 						let value = self.get_fpr(rs);
 						let value_raw = f32::to_bits(value);
 						match self.mio.write_32(address, value_raw) {
@@ -947,7 +947,7 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 							}
 						}
 					},
-					StoreFpFunct3::Unknown => {
+					FpFormatFunct3::Unknown => {
 						return self.illegal_instruction(opcode);
 					},
 				}
@@ -1075,41 +1075,93 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 			},
 			Op::MAdd => {
 				let rd = opcode.rd();
-				let rm = opcode.fp_rm();
+				let _rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
 				let rs1 = opcode.rs1();
 				let rs2 = opcode.rs2();
 				let rs3 = opcode.rs3();
-				// todo
+				let fp_format = opcode.funct3_fpformat();
+				match fp_format {
+					FpFormatFunct3::Width32 => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let c = self.get_fpr(rs3);
+						let result = a * b + c;
+						self.set_fpr(rd, result);
+						self.pc += 4;
+					},
+					_ => {
+						return self.illegal_instruction(opcode);
+					}
+				}
 			},
 			Op::MSub => {
 				let rd = opcode.rd();
-				let rm = opcode.fp_rm();
+				let _rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
 				let rs1 = opcode.rs1();
 				let rs2 = opcode.rs2();
 				let rs3 = opcode.rs3();
-				// todo
+				let fp_format = opcode.funct3_fpformat();
+				match fp_format {
+					FpFormatFunct3::Width32 => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let c = self.get_fpr(rs3);
+						let result = a * b - c;
+						self.set_fpr(rd, result);
+						self.pc += 4;
+					},
+					_ => {
+						return self.illegal_instruction(opcode);
+					}
+				}
 			},
 			Op::NMAdd => {
 				let rd = opcode.rd();
-				let rm = opcode.fp_rm();
+				let _rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
 				let rs1 = opcode.rs1();
 				let rs2 = opcode.rs2();
 				let rs3 = opcode.rs3();
-				// todo
+				let fp_format = opcode.funct3_fpformat();
+				match fp_format {
+					FpFormatFunct3::Width32 => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let c = self.get_fpr(rs3);
+						let result = - (a * b) - c;
+						self.set_fpr(rd, result);
+						self.pc += 4;
+					},
+					_ => {
+						return self.illegal_instruction(opcode);
+					}
+				}
 			},
 			Op::NMSub => {
 				let rd = opcode.rd();
-				let rm = opcode.fp_rm();
+				let _rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
 				let rs1 = opcode.rs1();
 				let rs2 = opcode.rs2();
 				let rs3 = opcode.rs3();
-				// todo
+				let fp_format = opcode.funct3_fpformat();
+				match fp_format {
+					FpFormatFunct3::Width32 => {
+						let a = self.get_fpr(rs1);
+						let b = self.get_fpr(rs2);
+						let c = self.get_fpr(rs3);
+						let result = - (a * b) + c;
+						self.set_fpr(rd, result);
+						self.pc += 4;
+					},
+					_ => {
+						return self.illegal_instruction(opcode);
+					}
+				}
 			},
 			Op::OpFp => {
 				let rd = opcode.rd();
 				let rs1 = opcode.rs1();
 				let rs2 = opcode.rs2();
-				//let rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
+				let _rm = opcode.fp_rm(); // rounding mode ignored - https://github.com/rust-lang/rust/issues/72252
 				let funct7 = opcode.funct7_fp();
 				match funct7 {
 					FpFunct7::Add_S => {
@@ -1329,7 +1381,6 @@ impl <Timer: MTimer, MIO: MemIO<Timer>, IntBus: InterruptBus,> Cpu<Timer, MIO, I
 				self.pc += 4; // No-op since our memory and peripherals are sequentially consistent :)	
 			},
 			Op::Atomic => {
-				// todo
 				let atomic_op = opcode.funct7_atomic();
 				let size = opcode.funct3_atomicsize();
 				let rd = opcode.rd();
