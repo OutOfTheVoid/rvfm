@@ -767,10 +767,6 @@ impl Opcode {
 		LoadFunct3::from_raw(self.funct3())
 	}
 	
-	pub fn funct3_loadfp(&self) -> LoadFpFunct3 {
-		LoadFpFunct3::from_raw(self.funct3())
-	}
-	
 	pub fn funct3_fpformat(&self) -> FpFormatFunct3 {
 		FpFormatFunct3::from_raw(self.funct3())
 	}
