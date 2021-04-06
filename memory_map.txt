@@ -7,8 +7,11 @@ Address       | Size                  | Description
 0xF003_0000   | 0x0000_1000 (4 KiB)   | Interrupt Bus Peripheral
 0xF004_0000   | 0x0000_1000 (4 KiB)   | Core 1 Controller
 0xF005_0000   | 0x0000_1000 (4 KiB)   | Sound Peripheral
-0xF006_0000   | 0x0000_1000 (4 KiB)   | MTimer Peripheral
-0xF007_0000   | 0x0000_1000 (4 KiB)   | Math Accelerator
+0xF006_0000   | 0x0000_1000 (4 KiB)   | MTimer Peripheral (Hart Local, per-hart)
+0xF007_0000   | 0x0000_1000 (4 KiB)   | Math Accelerator (Hart Local, per-hart)
+0xF008_0000   | 0x0000_1000 (4 KiB)   | Cart loader
+0xF009_0000   | 0x0000_1000 (4 KiB)   | Input Peripheral
+
 
 
 Debug Peripheral
@@ -171,5 +174,40 @@ Offset | Name              | Description
 0x0278 | vec4 14 store     | vector store trigger for r56, r57, r58, r59
 0x027C | vec4 15 store     | vector store trigger for r60, r61, r62, r63
 -----------------------------------------------------------------------
-0x3F8  | error             | error code register
-0x3FC  | command           | command register
+0x03F8 | error             | error code register
+0x03FC | command           | command register
+
+
+Cart Loader Peripheral
+======================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Command           | Command register
+0x0004 | Param 0           | Command param 0 register
+0x0008 | Param 1           | Command param 1 register
+0x000C | Param 2           | Command param 2 register
+0x0010 | Param 3           | Command param 3 register
+0x0014 | Param 4           | Command param 4 register
+0x0018 | Param 5           | Command param 5 register
+0x001C | Cartridge Count   | Cartridge count register
+
+
+Input Peripheral
+================
+
+Offset | Name              | Description
+-----------------------------------------------------------------------
+0x0000 | Key events 0-31   | Event status for keys 0 - 31
+0x0004 | Key events 32-63  | Event status for keys 32 - 63
+0x0008 | Key events 64-95  | Event status for keys 64 - 95
+0x000C | Key states 0-31   | Key state for keys 0 - 31
+0x0010 | Key states 32-63  | Key state for keys 32 - 63
+0x0014 | Key states 64-95  | Key state for keys 64 - 95
+0x0018 | Key event bclear  | Broad clear trigger for key events
+0x0020 | Mouse events      | Mouse event status
+0x0024 | Mouse X           | Mouse x position
+0x0028 | Mouse Y           | Mouse y position
+
+
+
